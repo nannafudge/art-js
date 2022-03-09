@@ -1,0 +1,22 @@
+{
+  "name": "art-js",
+  "version": "0.0.1",
+  "description": "Implementation of Asynchronous Ratcheting Trees in Typescript",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install-rust-tooling": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+    "install-wasm-tooling": "curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh",
+    "build-wasm": ""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nannafudge/art-js.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/nannafudge/art-js/issues"
+  },
+  "homepage": "https://github.com/nannafudge/art-js#readme"
+}

@@ -1,0 +1,3 @@
+[submodule "elliptic-curves"]
+	path = rust/elliptic-curves
+	url = git@github.com:RustCrypto/elliptic-curves.git
