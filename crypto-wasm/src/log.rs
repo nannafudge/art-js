@@ -11,7 +11,7 @@ extern "C" {
 #[macro_export]
 macro_rules! info {
     ($msg : expr) => {
-        _info(&stringify!($msg));
+        _info($msg);
     };
     ($($arg : tt)*) => {
         _info(&format_args!($($arg)*).to_string());
@@ -21,7 +21,7 @@ macro_rules! info {
 #[macro_export]
 macro_rules! error {
     ($msg : expr) => {
-        _error(&stringify!($msg));
+        _error($msg);
     };
     ($($arg: tt)*) => {
         _error(&format_args!($($arg)*).to_string());

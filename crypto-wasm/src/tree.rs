@@ -1,11 +1,7 @@
 extern crate alloc;
 
-use wasm_bindgen::prelude::*;
-
-use core::ptr;
 use core::cmp;
 use core::iter::Iterator;
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::errors;
@@ -54,17 +50,14 @@ impl<'a> AVLTreeIter<'a> {
         match node.left {
             Some(left) => {
                 self.outstanding.push(left);
-                self.curr = node.left;
+                self.curr = Some(left);
             },
-            None => {
-                self.curr = None;
-            }
+            None => self.curr = None
         }
 
         match node.right {
-            Some(right) => {
-                self.curr = node.right;
-            }
+            Some(right) => self.curr = Some(right),
+            None => return Some(node)
         }
 
         return Some(node);
@@ -76,18 +69,10 @@ impl<'a> Iterator for AVLTreeIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.curr {
-            Some(node) => {
-                return self._match(node);
-            },
-            None => {
-                match self.outstanding.pop() {
-                    Some(next) => {
-                        return self._match(next);
-                    },
-                    None => {
-                        return None;
-                    }
-                }
+            Some(node) => self._match(node),
+            None => match self.outstanding.pop() {
+                Some(next) => self._match(next),
+                None => None
             }
         }
     }
@@ -108,19 +93,19 @@ impl<'a> AVLTree<'a> {
     }
 }
 
-trait Operations {
-    fn insert(node: *mut Node) -> Result<*const Node, errors::AVLError>;
-    fn remove(node: *mut Node) -> Result<*const Node, errors::AVLError>;
+trait Operations<'a> {
+    fn insert(node: &'a Node) -> Result<&'a Node<'a>, errors::AVLError<'a>>;
+    fn remove(node: &'a Node) -> Result<&'a Node<'a>, errors::AVLError<'a>>;
     fn rebalance();
 }
 
-impl Operations for AVLTree {
-    fn insert(node: *mut Node) -> Result<*const Node, errors::AVLError> {
-        return;
+impl<'a> Operations<'a> for AVLTree<'a> {
+    fn insert(node: &'a Node) -> Result<&'a Node<'a>, errors::AVLError<'a>> {
+        return Ok(node);
     }
 
-    fn remove(node: *mut Node) -> Result<*const Node, errors::AVLError> {
-        return;
+    fn remove(node: &'a Node) -> Result<&'a Node<'a>, errors::AVLError<'a>> {
+        return Ok(node);
     }
 
     fn rebalance() {
