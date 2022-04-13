@@ -87,28 +87,29 @@ extern "C" {
 
 pub struct SharedRingBuffer<T: ?Sized + Serialize + DeserializeOwned> {
     raw: SharedArrayBuffer,
-    raw_capacity: usize, // Cache to prevent constantly converting
-
-    obj_size: usize,
-    length: usize,
     head: usize,
     tail: usize,
+    length: usize,
+    capacity: usize,
+    raw_capacity: usize, // Cache to prevent constantly converting
+    slice_size: usize,
     marker: PhantomData<T>
 }
 
 impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
     pub fn new(len: usize) -> Self {
-        let _obj_size: usize = (size_of::<T>() * 8) + LENGTH_BIT_U16; // 16 bits for size storage
-        let _raw_len: usize = len * _obj_size;
+        let slice_size: usize = (size_of::<T>() * 8) + LENGTH_BIT_U16; // 16 bits for size storage
+        let raw_len: usize = len * slice_size;
 
         return SharedRingBuffer {
             //TODO: Clean up this cast
-            raw_capacity: _raw_len,
-            raw: SharedArrayBuffer::new(_raw_len as u32),
-            obj_size: _obj_size,
-            length: 0,
+            raw: SharedArrayBuffer::new(raw_len as u32),
             head: 0,
             tail: 0,
+            length: 0,
+            capacity: len,
+            raw_capacity: raw_len,
+            slice_size: slice_size,
             marker: PhantomData
         };
     }
@@ -120,7 +121,7 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBuffer<T> for SharedRingBuffe
     }
 
     fn capacity(&self) -> usize {
-        return self.raw.byte_length() as usize / self.obj_size;
+        return self.capacity;
     }
 }
 
@@ -136,26 +137,22 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferWrite<T> for SharedRing
     fn push(&mut self, value: T) {
         assert!(self.length < self.capacity());
 
-        let new_head: usize = (self.head + self.obj_size) % self.raw_capacity;
+        let new_head: usize = (self.head + self.slice_size) % self.raw_capacity;
         assert!(new_head > self.tail, "Head of buffer would overwrite tail, what are you some kind of Ouroboros?");
 
         let data_view: DataView = DataView::new(&self.raw, self.head, new_head);
         let serialized: Vec<u8> = to_vec(&value).expect("Unable to serialize value");
 
-        assert!(serialized.len() <= self.obj_size - LENGTH_BIT_U16, "Serialized value exceeds buffer size");
+        assert!(serialized.len() <= self.slice_size - LENGTH_BIT_U16, "Serialized value exceeds buffer size");
 
         // Set size
         data_view.set_uint16(0, serialized.len() as u16);
 
         let mut index = START_INDEX;
         for u8_byte in serialized {
-            info!("{a}: {b}", a=index, b=u8_byte);
-
             data_view.set_uint8(index, u8_byte);
             index += 1;
         }
-
-        info!("New head is {}", new_head);
 
         self.length += 1;
         self.head = new_head;
@@ -168,24 +165,19 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferRead<T> for SharedRingB
             return None;
         }
 
-        let new_tail: usize = (self.tail + self.obj_size) % self.raw_capacity;
+        let new_tail: usize = (self.tail + self.slice_size) % self.raw_capacity;
         assert!(new_tail <= self.head, "Tail of buffer would overwrite head");
     
         let data_view: DataView = DataView::new(&self.raw, self.tail, new_tail);
-        let mut buffer: Vec<u8> = Vec::with_capacity(self.obj_size);
+        let mut buffer: Vec<u8> = Vec::with_capacity(self.slice_size);
 
         let size: usize = data_view.get_uint16(0) as usize + START_INDEX;
 
         for i in START_INDEX..size {
-            let u8_byte: u8 = data_view.get_uint8(i);
-
-            info!("{a}: {b}", a=i, b=u8_byte);
-            buffer.push(u8_byte);
+            buffer.push(data_view.get_uint8(i));
         }
 
         let result: T = from_mut_slice(&mut *buffer).expect("Unable to deserialize object");
-
-        info!("New tail is {}", new_tail);
 
         self.length -= 1;
         self.tail = new_tail;

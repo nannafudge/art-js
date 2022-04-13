@@ -38,7 +38,7 @@ fn test_shared_data_view() {
 }
 
 #[wasm_bindgen_test]
-fn test_ring_buffer_enqueue_dequeue() {
+fn test_ring_buffer_enqueue_dequeue_sequential() {
     let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(64);
     srb.push(TestObject{ value: 32 });
     srb.push(TestObject{ value: 16 });
@@ -49,6 +49,26 @@ fn test_ring_buffer_enqueue_dequeue() {
     assert_eq!(srb.len(), 2);
     assert_eq!(srb.dequeue().expect("Could not dequeue object #2").value, 16);
     assert_eq!(srb.len(), 1);
+    assert_eq!(srb.dequeue().expect("Could not dequeue object #3").value, 0);
+    assert_eq!(srb.len(), 0);
+}
+
+#[wasm_bindgen_test]
+fn test_ring_buffer_enqueue_dequeue_staggered() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(64);
+    srb.push(TestObject{ value: 32 });
+    srb.push(TestObject{ value: 16 });
+
+    assert_eq!(srb.len(), 2);
+    // TestObject{ value: 32 }
+    assert_eq!(srb.dequeue().expect("Could not dequeue object #1").value, 32);
+    assert_eq!(srb.len(), 1);
+
+    srb.push(TestObject{ value: 0 });
+    // TestObject{ value: 16 }
+    assert_eq!(srb.dequeue().expect("Could not dequeue object #2").value, 16);
+    assert_eq!(srb.len(), 1);
+    // TestObject{ value: 0 }
     assert_eq!(srb.dequeue().expect("Could not dequeue object #3").value, 0);
     assert_eq!(srb.len(), 0);
 }
