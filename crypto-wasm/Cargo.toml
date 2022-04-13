@@ -6,16 +6,41 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#web-sys = "0.3.56"
-wasm-bindgen = "0.2.79"
+js-sys = "0.3.57"
+wasm-bindgen = "0.2.80"
 getrandom = { version = "0.2.5", features = ["js"] }
 rand_core = "0.6.3"
 subtle = "2.4.1"
 elliptic-curve = "0.11.12"
 k256 = { version = "0.10.2", features = ["ecdh"] }
+hashbrown = "0.12.0"
+async-trait = "0.1.52"
+
+#rayon = "1.5.1"
+#wasm-bindgen-rayon = "1.0.3"
+lock_api = "0.4.6"
+#futures = { version = "0.3.21", default-features = false }
+futures-intrusive = { version = "0.4.0", default-features = false, features = ["alloc"] }
+ringbuffer = "0.8.4"
+
+serde = { version = "1.0.136", default-features = false, features = ["derive"] }
+#flatbuffers = "2.1.1"
+#flexbuffers = "2.0.0"
+serde_cbor = { version = "0.11.2", default-features = false, features = ["alloc", "unsealed_read_write"] }
+
+[dependencies.web-sys]
+web-sys = "0.3.57"
+features = [
+  'ErrorEvent',
+  'Event',
+  'Worker',
+  'DedicatedWorkerGlobalScope',
+  'MessageEvent',
+]
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.0"
+wasm-bindgen-test = "0.3.30"
+#mockall = "0.11.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -1,48 +1,78 @@
 #![cfg(test)]
 #[macro_use]
+extern crate elliptic_curve;
 extern crate crypto_art;
+extern crate alloc;
 
-use k256::{
-    EncodedPoint,
-    PublicKey
+use core::convert;
+
+use k256::Secp256k1;
+use k256::PublicKey;
+use elliptic_curve::{
+    ScalarCore
 };
 
-use k256::ecdh::{
-    EphemeralSecret,
-    SharedSecret
+use crypto_art::ecdh::{
+    Secret,
+    KeyOps,
+    Key,
 };
 
-use crypto_art::ecdh::DerivedSecret;
-
-use elliptic_curve::rand_core::OsRng;
-use wasm_bindgen_test::*;
 use crypto_art::log::*;
 
+use wasm_bindgen_test::*;
+use rand_core::OsRng;
+
+// This test should NEVER fail, and this scenario should NEVER happen
 #[wasm_bindgen_test]
-fn test_derive_ecdh_keypair() {
-    let s1: EphemeralSecret = EphemeralSecret::random(&mut OsRng);
-    let s2: EphemeralSecret = EphemeralSecret::random(&mut OsRng);
+fn test_invalid_scalar_dh() {
+    let scalar: ScalarCore<Secp256k1> = ScalarCore::<Secp256k1>::ZERO;
+    let result = Secret::from_repr(&scalar.to_be_bytes());
 
-    // Test theoretical deserialization and handshake
-    let p1_bytes: EncodedPoint = EncodedPoint::from(s1.public_key());
-    // s2 decodes p1's public key from compressed point
-    let p1: PublicKey = PublicKey::from_sec1_bytes(p1_bytes.as_ref())
-        .expect("Unable to deserialize Public Key!");
-    
-    let p2_bytes: EncodedPoint = EncodedPoint::from(s2.public_key());
-    // s1 decodes p2's public key from compressed point
-    let p2: PublicKey = PublicKey::from_sec1_bytes(p2_bytes.as_ref())
-        .expect("Unable to deserialize Public Key!");
+    assert!(result.is_err())
+}
 
-    let s1p2: SharedSecret = s1.diffie_hellman(&p2);
-    let s2p1: SharedSecret = s2.diffie_hellman(&p1);
+#[wasm_bindgen_test]
+fn test_public_key_err_dh() {
+    let s1: Secret = Secret::random(&mut OsRng);
+    let p2: PublicKey = Secret::random(&mut OsRng).public_key();
 
-    let s1p2keypair = DerivedSecret::from_repr(s1p2.as_bytes())
+    let result = p2.diffie_hellman(&s1.public_key());
+    assert!(result.is_err())
+}
+
+#[wasm_bindgen_test]
+fn test_container_public_key_err_dh() {
+    let p1: Key = Secret::random(&mut OsRng).public_key().into();
+    let p2: Key = Secret::random(&mut OsRng).public_key().into();
+
+    let result = p2.diffie_hellman(&p1);
+    assert!(result.is_err())
+}
+
+#[wasm_bindgen_test]
+fn test_no_container_dh() {
+    let s1: Secret = Secret::random(&mut OsRng);
+    let s2: Secret = Secret::random(&mut OsRng);
+
+    let s1p2: Secret = s1.diffie_hellman(&(s2.public_key()))
         .expect("Unable to derive EC pair from secret value for s1p2!");
-
-    let s2p1keypair = DerivedSecret::from_repr(s1p2.as_bytes())
+    let s2p1: Secret = s2.diffie_hellman(&(s1.public_key()))
         .expect("Unable to derive EC pair from secret value for s2p1!");
-    
+
     // Ensure the derived keypair identities are the same
-    assert_eq!(s1p2keypair.public_key().as_affine(), s2p1keypair.public_key().as_affine())
+    assert_eq!(s1p2.public_key().as_affine(), s2p1.public_key().as_affine())
+}
+
+#[wasm_bindgen_test]
+fn test_key_container_dh() {
+    let s1: Key = Secret::random(&mut OsRng).into();
+    let s2: Key = Secret::random(&mut OsRng).into();
+
+    let s1p2: Key = s1.diffie_hellman(&s2)
+        .expect("Unable to derive EC keypair from key containers");
+    let s2p1: Key = s2.diffie_hellman(&s1)
+        .expect("Unable to derive EC keypair from key containers");
+
+    assert_eq!(s1p2.pk, s2p1.pk)
 }

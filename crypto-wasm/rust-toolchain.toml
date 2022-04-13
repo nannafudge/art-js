@@ -1,0 +1,10 @@
+[toolchain]
+channel = "stable"
+#components = [ "rustc", "cargo", "rustfmt", "rust-std" ]
+targets = [ "wasm32-unknown-unknown" ]
+
+[build]
+rustflags = ["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"]
+
+[unstable]
+build-std = ["panic_abort", "std"]

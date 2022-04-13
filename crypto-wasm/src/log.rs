@@ -14,7 +14,7 @@ macro_rules! info {
         _info($msg);
     };
     ($($arg : tt)*) => {
-        _info(&format_args!($($arg)*).to_string());
+        _info(&format!($($arg)*))
     };
 }
 
@@ -24,6 +24,6 @@ macro_rules! error {
         _error($msg);
     };
     ($($arg: tt)*) => {
-        _error(&format_args!($($arg)*).to_string());
+        _error(&format!($($arg)*))
     };
 }

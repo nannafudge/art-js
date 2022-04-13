@@ -8,11 +8,11 @@ use crypto_art::log::*;
 #[wasm_bindgen_test]
 fn test_info() {
     info!("Hello, World!");
-    info!("{:?} Formatter", "Hello, World!");
+    info!("{} Formatter", "Hello, World!");
 }
 
 #[wasm_bindgen_test]
 fn test_error() {
     error!("Error!");
-    error!("{:?} Formatter", "Error!");
+    error!("{} Formatter", "Error!");
 }

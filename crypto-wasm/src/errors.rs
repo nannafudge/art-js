@@ -3,13 +3,15 @@ extern crate alloc;
 use core::fmt;
 
 #[derive(Debug, Clone)]
-pub struct AVLError<'a> {
-    pub reason: &'a str
+pub struct RatchetError<'a> {
+    pub reason: &'a str,
+    pub index: usize,
+    pub height: usize
 }
 
-impl<'a> fmt::Display for AVLError<'a> {
+impl<'a> fmt::Display for RatchetError<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        return write!(f, "Invalid AVL Tree Operation: {}", self.reason);
+        return write!(f, "Invalid Ratchet Tree Operation: {:?}, height: {:#}, index: {:#}", self.reason, self.height, self.index);
     }
 }
 
