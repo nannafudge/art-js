@@ -108,7 +108,6 @@ impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
         let raw_len: usize = (len * slice_size) + LENGTH_BIT_LOCK;
 
         let raw: SharedArrayBuffer = SharedArrayBuffer::new(raw_len as u32);
-        Atomics::store(&raw, 0, IS_LOCKED);
 
         return SharedRingBuffer {
             //TODO: Clean up this cast
@@ -181,7 +180,7 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferRead<T> for SharedRingB
         // Inclusive <= as the tail can consume the head bytes
         assert!(new_tail <= self.head, "Tail of buffer would overwrite head");
     
-        // TODO: Investigate if 
+        // TODO: Investigate if it is truly worth using TypedArrays vs DataViews for performance (Firefox)
         //let view: Uint8Array = Uint8Array::new_with_byte_offset_and_length(&self.raw, self.tail as u32, self.slice_size as u32);
 
         let data_view: DataView = DataView::new(&self.raw, self.tail, self.slice_size);
