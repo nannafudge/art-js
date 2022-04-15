@@ -13,61 +13,40 @@ use futures_intrusive::sync::{
     GenericMutexLockFuture
 };
 
+use js_sys::{
+    SharedArrayBuffer,
+    Uint8Array,
+    Atomics
+};
+
 use core::{
     sync::atomic::{
         AtomicUsize,
         Ordering
-    }
+    },
+    default::Default,
+    cell::RefCell,
+    ops::Deref
 };
-
-use core::default::Default;
 
 use crate::log::*;
 
-/*use alloc::{
-    vec::Vec,
-    boxed::Box,
-    sync::Arc
-};
-
-use core::{
-    usize,
-    mem,
-    cmp::{
-        Ord,
-        Ordering,
-        PartialOrd,
-        Eq,
-        PartialEq
-    },
-    iter::Iterator,
-    default::Default,
-    borrow::Borrow,
-    marker::{
-        Sync,
-        PhantomData
-    },
-    sync::atomic::{
-        AtomicUsize
-    },
-    task::{
-        Poll,
-        Context,
-        Waker
-    },
-    future::{
-        Future,
-    },
-    pin::Pin,
-    ops::Deref
-};*/
-
-use async_trait::async_trait;
-
 const IS_LOCKED: usize = 1 << 0;
+const IS_LOCKED_JS: i32 = 1 << 0;
 
 #[wasm_bindgen]
 pub struct AtomicLock(AtomicUsize);
+
+#[wasm_bindgen]
+pub struct AtomicLockJS {
+    view: Option<RefCell<Uint8Array>>
+}
+
+impl Default for AtomicLock {
+    fn default() -> Self {
+        return AtomicLock(AtomicUsize::new(0));
+    }
+}
 
 unsafe impl RawMutex for AtomicLock {
     const INIT: AtomicLock = AtomicLock(AtomicUsize::new(0));
@@ -87,84 +66,43 @@ unsafe impl RawMutex for AtomicLock {
     }
 }
 
-impl Default for AtomicLock {
-    fn default() -> Self {
-        return AtomicLock(AtomicUsize::new(0));
+unsafe impl RawMutex for AtomicLockJS {
+    const INIT: AtomicLockJS = AtomicLockJS { view: None };
+
+    type GuardMarker = GuardNoSend;
+
+    fn lock(&self) {
+        self.try_lock();
+    }
+
+    fn try_lock(&self) -> bool {
+        return Atomics::or(self.view.as_ref().expect("AtomicLockJS is uninitialized").borrow().deref(), 0, IS_LOCKED_JS) == Ok(0);
+    }
+
+    unsafe fn unlock(&self) {
+        Atomics::and(self.view.as_ref().expect("AtomicLockJS is uninitialized").borrow().deref(), 0, !IS_LOCKED_JS);
     }
 }
 
 impl AtomicLock {
-    fn is_locked(&self) -> bool {
-        return self.0.load(Ordering::Relaxed) == 0;
-    }
-}
-/*const IS_LOCKED: usize = 1 << 0;
-const HAS_WAITERS: usize = 1 << 1;
-
-enum Waiter {
-    Waiting(Waker),
-    Woken,
-}
-
-impl Waiter {
-    fn register(&mut self, waker: &Waker) {
-        match self {
-            Self::Waiting(w) if waker.will_wake(w) => {}
-            _ => *self = Self::Waiting(waker.clone())
-        }
+    pub fn new() -> Self {
+        return Self::default();
     }
 
-    fn wake(&mut self) {
-        match mem::replace(self, Self::Woken) {
-            Self::Waiting(waker) => waker.wake(),
-            Self::Woken => {}
-        }
+    pub fn is_locked(&self) -> bool {
+        return self.0.load(Ordering::Relaxed) == IS_LOCKED;
     }
 }
 
-pub struct Mutex<T: ?Sized> {
-    state: AtomicUsize,
-    data: Arc<T>,
-    waiter: Arc<Waiter>
-}
+// TODO: Make this return a Result::Err, if the Uint8Array size < 1
+impl AtomicLockJS {
+    pub fn new(view: RefCell<Uint8Array>) -> Self {
+        return Self {
+            view: Some(view)
+        };
+    }
 
-pub struct MutexGuard<'a, T: ?Sized> {
-    mutex: Mutex<T>,
-    marker: PhantomData<&'a T>,
-}
-
-pub struct MutexLockFuture<'a, T: ?Sized> {
-    mutex: Mutex<T>,
-    marker: PhantomData<&'a T>
-}
-
-impl<'a, T: ?Sized> Mutex<T> {
-    pub fn lock(self: &Self) -> MutexLockFuture<'a, T> {
-        return MutexLockFuture::<'a> {
-            mutex: *self,
-            marker: PhantomData
-        }
+    pub fn is_locked(&self) -> bool {
+        return Atomics::load(self.view.as_ref().expect("AtomicLockJS is uninitialized").borrow().deref(), 0) == Ok(IS_LOCKED_JS);
     }
 }
-
-impl<'a, T: ?Sized> Deref for MutexLockFuture<'a, T> {
-    type Target = Mutex<T>;
-
-    fn deref(&self) -> &Self::Target {
-        return &self.mutex;
-    }
-}
-
-impl<'a, T> Future for MutexLockFuture<'a, T> {
-    type Output = MutexGuard<'a, T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut data = self.mutex.data;
-
-        if let Some(mut_lock) = Arc::get_mut(&mut data) {
-
-        }
-
-        return Poll::Pending;
-    }
-}*/
