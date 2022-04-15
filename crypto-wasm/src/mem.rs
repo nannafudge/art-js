@@ -2,6 +2,7 @@ extern crate alloc;
 
 use wasm_bindgen::prelude::*;
 
+// TODO: Replace with Heapless
 use alloc::{
     string::String,
     vec::Vec
@@ -9,23 +10,15 @@ use alloc::{
 
 use core::{
     borrow::Borrow,
-    convert::{
-        From,
-        Into
-    },
-    mem::{
-        size_of
-    },
-    marker::{
-        PhantomData,
-        Sized,
-        Copy
-    },
+    convert::From,
+    convert::Into,
+    mem::size_of,
+    marker::PhantomData,
+    marker::Sized,
+    marker::Copy,
     option::Option,
-    ops::{
-        Deref,
-        Range
-    }
+    ops::Deref,
+    ops::Range
 };
 
 use js_sys::{
@@ -44,8 +37,6 @@ use ringbuffer::{
 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_cbor::{
-    Serializer,
-    Deserializer,
     ser::to_vec,
     de::from_mut_slice
 };
@@ -56,7 +47,7 @@ use crate::log::*;
 // TODO: Implement a Slice struct that contains the offset and a trait with helper methods to get correct bit offsets
 const LENGTH_BIT_U16: usize = 16; // Additional length added to each chunk
 const LENGTH_BIT_LOCK: usize = 8; // Additional bit to be used for locking access to the Buffer
-const START_INDEX: usize = (LENGTH_BIT_U16 + LENGTH_BIT_LOCK) / 8;
+const START_INDEX: usize = LENGTH_BIT_U16 / 8;
 
 #[wasm_bindgen]
 extern "C" {
@@ -93,6 +84,7 @@ const IS_LOCKED: i32 = 1 << 0;
 
 pub struct SharedRingBuffer<T: ?Sized + Serialize + DeserializeOwned> {
     raw: SharedArrayBuffer,
+    view: DataView,
     head: usize,
     tail: usize,
     length: usize,
@@ -105,21 +97,26 @@ pub struct SharedRingBuffer<T: ?Sized + Serialize + DeserializeOwned> {
 impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
     pub fn new(len: usize) -> Self {
         let slice_size: usize = (size_of::<T>() * 8) + LENGTH_BIT_U16; // 16 bits for size storage
-        let raw_len: usize = (len * slice_size) + LENGTH_BIT_LOCK;
+        let view_len: usize = len * slice_size;
 
-        let raw: SharedArrayBuffer = SharedArrayBuffer::new(raw_len as u32);
+        // + additional bit for mutex
+        let raw: SharedArrayBuffer = SharedArrayBuffer::new((view_len + LENGTH_BIT_LOCK) as u32);
 
         return SharedRingBuffer {
-            //TODO: Clean up this cast
+            view: DataView::new(&raw, 1, view_len),
             raw: raw,
             head: 0,
             tail: 0,
             length: 0,
             capacity: len,
-            raw_capacity: raw_len,
+            raw_capacity: view_len,
             slice_size: slice_size,
             marker: PhantomData
         };
+    }
+
+    pub fn uint8_view(&self) -> Uint8Array {
+        return Uint8Array::new(&self.raw);
     }
 }
 
@@ -134,68 +131,61 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBuffer<T> for SharedRingBuffe
 }
 
 impl<A: ?Sized + Serialize + DeserializeOwned> Extend<A> for SharedRingBuffer<A> {
-    fn extend<T: IntoIterator<Item = A>>(&mut self, iter: T) {
-        for elem in iter {
-            self.push(elem);
-        }
+    fn extend<T: IntoIterator<Item = A>>(&mut self, _: T) {
+        unimplemented!("Unable to extend fixed array bounds!");
     }
 }
 
-/* 
-    We use asserts within these function definitions as it is better to Panic than allow the ringbuffer to get corrupt
-*/
+// TODO: Reimplement traits with Result<()>
 impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferWrite<T> for SharedRingBuffer<T> {
     fn push(&mut self, value: T) {
         assert!(self.length < self.capacity());
 
-        let new_head: usize = (self.head + self.slice_size) % self.raw_capacity;
-        assert!(new_head > self.tail, "Head of buffer would overwrite tail, what are you some kind of Ouroboros?");
-
-        let data_view: DataView = DataView::new(&self.raw, self.head, self.slice_size);
         let serialized: Vec<u8> = to_vec(&value).expect("Unable to serialize value");
-
-        assert!(serialized.len() <= self.slice_size - LENGTH_BIT_U16, "Serialized value exceeds buffer size");
+        assert!(serialized.len() <= self.slice_size - LENGTH_BIT_U16, "Serialized value exceeds max slot size");
 
         // Set size
-        data_view.set_uint16(0, serialized.len() as u16);
+        self.view.set_uint16(self.head, serialized.len() as u16);
 
-        let mut index = START_INDEX;
+        let mut index = self.head + START_INDEX;
         for u8_byte in serialized {
-            data_view.set_uint8(index, u8_byte);
+            /*if index >= self.raw_capacity {
+                index = index % self.raw_capacity;
+            }*/
+
+            self.view.set_uint8(index, u8_byte);
             index += 1;
         }
 
         self.length += 1;
-        self.head = new_head;
+        self.head = (self.head + self.slice_size) % self.raw_capacity;
     }
 }
 
+// TODO: Reimplement traits with Result<()>
 impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferRead<T> for SharedRingBuffer<T> {
     fn dequeue(&mut self) -> Option<T> {
         if self.is_empty() {
             return None;
         }
 
-        let new_tail: usize = (self.tail + self.slice_size) % self.raw_capacity;
-        // Inclusive <= as the tail can consume the head bytes
-        assert!(new_tail <= self.head, "Tail of buffer would overwrite head");
-    
         // TODO: Investigate if it is truly worth using TypedArrays vs DataViews for performance (Firefox)
         //let view: Uint8Array = Uint8Array::new_with_byte_offset_and_length(&self.raw, self.tail as u32, self.slice_size as u32);
-
-        let data_view: DataView = DataView::new(&self.raw, self.tail, self.slice_size);
         let mut buffer: Vec<u8> = Vec::with_capacity(self.slice_size);
+        let size: usize = self.view.get_uint16(self.tail) as usize;
 
-        let size: usize = data_view.get_uint16(0) as usize + START_INDEX;
+        for i in self.tail + START_INDEX..size + self.tail + START_INDEX {
+            /*if i >= self.raw_capacity {
+                i = i % self.raw_capacity;
+            }*/
 
-        for i in START_INDEX..size {
-            buffer.push(data_view.get_uint8(i));
+            buffer.push(self.view.get_uint8(i));
         }
 
         let result: T = from_mut_slice(&mut *buffer).expect("Unable to deserialize object");
 
         self.length -= 1;
-        self.tail = new_tail;
+        self.tail = (self.tail + self.slice_size) % self.raw_capacity;
 
         return Some(result);
     }

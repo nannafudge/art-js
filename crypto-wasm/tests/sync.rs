@@ -6,10 +6,8 @@ extern crate crypto_art;
 use wasm_bindgen_test::*;
 use crypto_art::{
     log::*,
-    sync::{
-        AtomicLock,
-        AtomicLockJS
-    }
+    sync::AtomicLock,
+    sync::AtomicLockJS
 };
 
 use lock_api::{
@@ -18,24 +16,13 @@ use lock_api::{
     MutexGuard
 };
 
-use core::{
-    future::Future,
-    pin::Pin,
-    task::{
-        Poll,
-        Context,
-        Waker
-    },
-    ops::Deref,
-    cell::RefCell
-};
-
 use js_sys::{
     SharedArrayBuffer,
     Uint8Array
 };
 
 use alloc::sync::Arc;
+use core::cell::RefCell;
 
 // TODO: Test this with Web Workers once I've begun work implementing multithreading via such
 #[wasm_bindgen_test]
@@ -113,19 +100,21 @@ fn test_js_atomic_lock_access() {
 
 // Test atomic operation/locking. To be used with a FIFO buffer/circular buffer for cross-memory access.
 // Test RAII dropping of Mutex guards as well
-/*#[wasm_bindgen_test]
+#[wasm_bindgen_test]
 fn test_mutex_js_atomic_lock() {
-    let mutex: Mutex<AtomicLock, usize> = Mutex::new(0);
+    let sab: SharedArrayBuffer = SharedArrayBuffer::new(8);
+    let lock: AtomicLockJS = AtomicLockJS::new(RefCell::new(Uint8Array::new(&sab)));
+    let mutex: Mutex<AtomicLockJS, usize> = Mutex::const_new(lock, 0);
 
     {
-        let mut guard: MutexGuard<AtomicLock, usize> = mutex.try_lock().expect("Error acquiring Mutex guard");
+        let mut guard: MutexGuard<AtomicLockJS, usize> = mutex.try_lock().expect("Error acquiring Mutex guard");
         *guard += 1;
         
         assert!(mutex.try_lock().is_none());
     }
 
     {
-        let mut guard: MutexGuard<AtomicLock, usize> = mutex.try_lock().expect("Error acquiring Mutex guard");
+        let mut guard: MutexGuard<AtomicLockJS, usize> = mutex.try_lock().expect("Error acquiring Mutex guard");
         *guard += 1;
         
         assert!(mutex.try_lock().is_none());
@@ -133,4 +122,4 @@ fn test_mutex_js_atomic_lock() {
     }
 
     assert!(mutex.into_inner() == 2);
-}*/
+}

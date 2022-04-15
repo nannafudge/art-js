@@ -20,12 +20,10 @@ use js_sys::{
 };
 
 use core::{
-    sync::atomic::{
-        AtomicUsize,
-        Ordering
-    },
-    default::Default,
     cell::RefCell,
+    default::Default,
+    sync::atomic::AtomicUsize,
+    sync::atomic::Ordering,
     ops::Deref
 };
 

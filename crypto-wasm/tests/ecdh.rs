@@ -8,9 +8,7 @@ use core::convert;
 
 use k256::Secp256k1;
 use k256::PublicKey;
-use elliptic_curve::{
-    ScalarCore
-};
+use elliptic_curve::ScalarCore;
 
 use crypto_art::ecdh::{
     Secret,

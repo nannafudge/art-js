@@ -3,20 +3,14 @@ extern crate subtle;
 
 use core::{
     borrow::Borrow,
-    cmp::{
-        PartialEq
-    },
+    cmp::PartialEq,
     clone::Clone,
-    convert::{
-        Into,
-        From
-    },
+    convert::Into,
+    convert::From,
     marker::Copy,
     mem,
-    fmt::{
-        Debug,
-        Formatter
-    }
+    fmt::Debug,
+    fmt::Formatter
 };
 
 use rand_core::{

@@ -10,30 +10,20 @@ use alloc::{
 use core::{
     usize,
     mem,
-    cmp::{
-        Ord,
-        Ordering,
-        PartialOrd,
-        Eq,
-        PartialEq
-    },
+    cmp::Ord,
+    cmp::Ordering,
+    cmp::PartialOrd,
+    cmp::Eq,
+    cmp::PartialEq
     iter::Iterator,
     default::Default,
     borrow::Borrow,
-    marker::{
-        Sync,
-        PhantomData
-    },
-    sync::atomic::{
-        AtomicUsize
-    },
-    task::{
-        Poll,
-        Context
-    },
-    future::{
-        Future
-    },
+    marker::Sync,
+    marker::PhantomData
+    sync::atomic::AtomicUsize
+    task::Poll,
+    task::Context
+    future::Future
     pin::Pin,
     ops::Deref
 };
