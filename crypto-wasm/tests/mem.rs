@@ -38,16 +38,6 @@ struct TestObject {
     value: u32
 }
 
-fn is_zeroed(arr: &Uint8Array) -> bool {
-    for i in 0..arr.length() {
-        if arr.get_index(i) != 0 {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 #[wasm_bindgen_test]
 fn test_shared_data_view() {
     let shared: SharedArrayBuffer = SharedArrayBuffer::new(16);
@@ -174,4 +164,40 @@ fn test_ring_buffer_mutex_loop_fast() {
     }
 
     assert_eq!(mutex.lock().len(), 0);
+}
+
+#[wasm_bindgen_test]
+fn test_ring_buffer_auxiliary_functions() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    assert_eq!(srb.get_head_index(), 0);
+    srb.push(TestObject{ value: 32 });
+    assert_eq!(srb.get_head_index(), 1);
+    srb.push(TestObject{ value: 16 });
+    assert_eq!(srb.get_head_index(), 2);
+    srb.push(TestObject{ value: 0 });
+    assert_eq!(srb.get_head_index(), 3);
+
+    assert_eq!(32, srb.read(0).expect("No value present").value);
+    assert_eq!(16, srb.read(1).expect("No value present").value);
+    assert_eq!(0, srb.read(2).expect("No value present").value);
+
+    assert_eq!(srb.get_tail_index(), 0);
+    srb.dequeue();
+    assert_eq!(srb.get_tail_index(), 1);
+    srb.dequeue();
+    assert_eq!(srb.get_tail_index(), 2);
+    srb.dequeue();
+    assert_eq!(srb.get_tail_index(), 3);
+
+    assert!(srb.read(12345).is_none());
+
+    srb.write(&TestObject{ value: 12345 }, 0);
+    assert_eq!(12345, srb.read(0).expect("No value present").value);
+}
+
+fn test_ring_buffer_get() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+
+    srb.push(TestObject{ value: 32 });
+    assert_eq!(32, srb.get(-1).expect("Unable to get value").value);
 }

@@ -12,13 +12,16 @@ use core::{
     borrow::Borrow,
     convert::From,
     convert::Into,
+    iter::FromIterator,
     mem::size_of,
     marker::PhantomData,
     marker::Sized,
     marker::Copy,
     option::Option,
     ops::Deref,
-    ops::Range
+    ops::Range,
+    ops::IndexMut,
+    ops::Index
 };
 
 use js_sys::{
@@ -78,9 +81,13 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = setUint16)]
     pub fn set_uint16(this: &DataView, byte_offset: usize, value: u16);
-}
 
-const IS_LOCKED: i32 = 1 << 0;
+    #[wasm_bindgen(method, js_name = getUint32)]
+    pub fn get_uint32(this: &DataView, byte_offset: usize) -> u32;
+
+    #[wasm_bindgen(method, js_name = setUint32)]
+    pub fn set_uint32(this: &DataView, byte_offset: usize, value: u32);
+}
 
 pub struct SharedRingBuffer<T: ?Sized + Serialize + DeserializeOwned> {
     raw: SharedArrayBuffer,
@@ -115,6 +122,51 @@ impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
         };
     }
 
+    // Read a value at an index without consuming it
+    pub fn read(&self, index: usize) -> Option<T> {
+        if index > self.capacity {
+            return None;
+        }
+
+        let real_index = index * self.slice_size;
+
+        let mut buffer: Vec<u8> = Vec::with_capacity(self.slice_size);
+        let size: usize = self.view.get_uint16(real_index) as usize;
+
+        for i in real_index + START_INDEX..size + real_index + START_INDEX {
+            buffer.push(self.view.get_uint8(i));
+        }
+
+        return from_mut_slice(&mut *buffer).ok();
+    }
+
+    // Write a value at a particular index
+    pub fn write(&mut self, value: &T, index: usize) {
+        assert!(index <= self.capacity);
+
+        let serialized: Vec<u8> = to_vec(value).expect("Unable to serialize value");
+        assert!(serialized.len() <= self.slice_size - LENGTH_BIT_U16, "Serialized value exceeds max slot size");
+
+        let mut real_index = index * self.slice_size;
+
+        // Set size
+        self.view.set_uint16(real_index, serialized.len() as u16);
+
+        real_index += START_INDEX;
+        for u8_byte in serialized {
+            self.view.set_uint8(real_index, u8_byte);
+            real_index += 1;
+        }
+    }
+
+    pub fn get_head_index(&self) -> usize {
+        return self.head;
+    }
+
+    pub fn get_tail_index(&self) -> usize {
+        return self.tail;
+    }
+
     pub fn uint8_view(&self) -> Uint8Array {
         return Uint8Array::new(&self.raw);
     }
@@ -136,29 +188,42 @@ impl<A: ?Sized + Serialize + DeserializeOwned> Extend<A> for SharedRingBuffer<A>
     }
 }
 
+impl <T: ?Sized + Serialize + DeserializeOwned> FromIterator<T> for SharedRingBuffer<T> {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+        let items: Vec<T> = iter.into_iter().collect();
+        let mut ringbuffer: SharedRingBuffer<T> = SharedRingBuffer::new(items.len());
+
+        for item in items {
+            ringbuffer.push(item);
+        }
+
+        return ringbuffer;
+    }
+}
+
+impl <T: ?Sized + Serialize + DeserializeOwned> Index<isize> for SharedRingBuffer<T> {
+    type Output = T;
+
+    fn index(&self, index: isize) -> &Self::Output {
+        return self.get(index).expect("Invalid index specified");
+    }
+}
+
+impl <T: ?Sized + Serialize + DeserializeOwned> IndexMut<isize> for SharedRingBuffer<T> {
+    fn index_mut(&mut self, index: isize) -> &mut Self::Output {
+        return self.get_mut(index).expect("Invalid index specified");
+    }
+}
+
 // TODO: Reimplement traits with Result<()>
 impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferWrite<T> for SharedRingBuffer<T> {
     fn push(&mut self, value: T) {
         assert!(self.length < self.capacity());
 
-        let serialized: Vec<u8> = to_vec(&value).expect("Unable to serialize value");
-        assert!(serialized.len() <= self.slice_size - LENGTH_BIT_U16, "Serialized value exceeds max slot size");
-
-        // Set size
-        self.view.set_uint16(self.head, serialized.len() as u16);
-
-        let mut index = self.head + START_INDEX;
-        for u8_byte in serialized {
-            /*if index >= self.raw_capacity {
-                index = index % self.raw_capacity;
-            }*/
-
-            self.view.set_uint8(index, u8_byte);
-            index += 1;
-        }
+        self.write(&value, self.head);
 
         self.length += 1;
-        self.head = (self.head + self.slice_size) % self.raw_capacity;
+        self.head = (self.head + 1) % self.capacity;
     }
 }
 
@@ -169,25 +234,12 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferRead<T> for SharedRingB
             return None;
         }
 
-        // TODO: Investigate if it is truly worth using TypedArrays vs DataViews for performance (Firefox)
-        //let view: Uint8Array = Uint8Array::new_with_byte_offset_and_length(&self.raw, self.tail as u32, self.slice_size as u32);
-        let mut buffer: Vec<u8> = Vec::with_capacity(self.slice_size);
-        let size: usize = self.view.get_uint16(self.tail) as usize;
-
-        for i in self.tail + START_INDEX..size + self.tail + START_INDEX {
-            /*if i >= self.raw_capacity {
-                i = i % self.raw_capacity;
-            }*/
-
-            buffer.push(self.view.get_uint8(i));
-        }
-
-        let result: T = from_mut_slice(&mut *buffer).expect("Unable to deserialize object");
+        let result: Option<T> = self.read(self.tail);
 
         self.length -= 1;
-        self.tail = (self.tail + self.slice_size) % self.raw_capacity;
+        self.tail = (self.tail + 1) % self.capacity;
 
-        return Some(result);
+        return result;
     }
 
     fn skip(&mut self) {
@@ -195,42 +247,50 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferRead<T> for SharedRingB
     }
 }
 
-/*impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferExt<T> for SharedRingBuffer<T> {
-    fn fill_with<F: FnMut() -> T>(&mut self, f: F) {
-        for i in 0..self.capacity() - 1 {
+impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferExt<T> for SharedRingBuffer<T> {
+    fn fill_with<F: FnMut() -> T>(&mut self, mut f: F) {
+        for _ in 0..self.capacity - 1 {
             self.push(f());
         }
     }
 
     /// Empties the buffer entirely. Sets the length to 0 but keeps the capacity allocated.
     fn clear(&mut self) {
-        let view: Uint8Array = Uint8Array::new(&self.raw);
-        view.fill(0, 1, self.raw_capacity as u32);
+        //let view: Uint8Array = Uint8Array::new(&self.raw);
+        //view.fill(0, 1, self.raw_capacity as u32);
+
+        for i in 0..self.raw_capacity / 32 {
+            self.view.set_uint32(i, 0);
+        }
 
         self.head = 0;
         self.tail = 0;
         self.length = 0;
     }
 
-    /// Gets a value relative to the current index. 0 is the next index to be written to with push.
-    /// -1 and down are the last elements pushed and 0 and up are the items that were pushed the longest ago.
     fn get(&self, index: isize) -> Option<&T> {
+        //unimplemented!("get is not implemented for SharedRingBuffer! Please use get_raw instead!");
+        if index < 0 {
+            return self.read(self.length - (index.abs() - 1) as usize).as_ref();
+        }
 
+        return self.read(self.length + index as usize).as_ref();
     }
 
-    /// Gets a value relative to the current index mutably. 0 is the next index to be written to with push.
-    /// -1 and down are the last elements pushed and 0 and up are the items that were pushed the longest ago.
+    // Oof copy paste, seriously man this trait...
     fn get_mut(&mut self, index: isize) -> Option<&mut T> {
+        if index < 0 {
+            return self.read(self.length - (index.abs() - 1) as usize).as_mut();
+        }
 
+        return self.read(self.length + index as usize).as_mut();
     }
 
-    /// Gets a value relative to the start of the array (rarely useful, usually you want [`Self::get`])
-    fn get_absolute(&self, index: usize) -> Option<&T> {
-
+    fn get_absolute<'a>(&'a self, index: usize) -> Option<&T> {
+        return self.read(index).as_ref();
     }
 
-    /// Gets a value mutably relative to the start of the array (rarely useful, usually you want [`Self::get_mut`])
     fn get_absolute_mut(&mut self, index: usize) -> Option<&mut T> {
-
+        return self.read(index).as_mut();
     }
-}*/
+}
