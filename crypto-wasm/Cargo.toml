@@ -16,17 +16,13 @@ k256 = { version = "0.10.2", features = ["ecdh"] }
 hashbrown = "0.12.0"
 async-trait = "0.1.52"
 
-#rayon = "1.5.1"
-#wasm-bindgen-rayon = "1.0.3"
 lock_api = "0.4.6"
-#futures = { version = "0.3.21", default-features = false }
 futures-intrusive = { version = "0.4.0", default-features = false, features = ["alloc"] }
 ringbuffer = "0.8.4"
+bumpalo = { version = "3.9.1", features = ["collections"] }
 
 serde = { version = "1.0.136", default-features = false, features = ["derive"] }
-#flatbuffers = "2.1.1"
-#flexbuffers = "2.0.0"
-serde_cbor = { version = "0.11.2", default-features = false, features = ["alloc", "unsealed_read_write"] }
+serde_cbor = { version = "0.11.2", default-features = false }
 
 [dependencies.web-sys]
 web-sys = "0.3.57"

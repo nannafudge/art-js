@@ -99,6 +99,7 @@ name = "crypto-art"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bumpalo",
  "elliptic-curve",
  "futures-intrusive",
  "getrandom",

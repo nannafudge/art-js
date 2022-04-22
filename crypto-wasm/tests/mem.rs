@@ -22,15 +22,13 @@ use crypto_art::{
 
 use lock_api::{
     Mutex,
-    RawMutex,
     MutexGuard
 };
 
 use serde::{Deserialize, Serialize};
 
 use js_sys::{
-    SharedArrayBuffer,
-    Uint8Array
+    SharedArrayBuffer
 };
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -189,15 +187,144 @@ fn test_ring_buffer_auxiliary_functions() {
     srb.dequeue();
     assert_eq!(srb.get_tail_index(), 3);
 
+    assert!(srb.read(0).is_none());
+    assert!(srb.read(1).is_none());
+    assert!(srb.read(2).is_none());
+
     assert!(srb.read(12345).is_none());
 
     srb.write(&TestObject{ value: 12345 }, 0);
     assert_eq!(12345, srb.read(0).expect("No value present").value);
 }
 
+/* 
+  I hate this functionality so much, why is it in the trait? Maybe I'll find a use
+  for it eventually. Implemented as to the specification:
+
+  Gets a value relative to the current index. 0 is the next index to be written to with push.
+  -1 and down are the last elements pushed and 0 and up are the items that were pushed the longest ago.
+*/
+#[wasm_bindgen_test]
+fn test_ring_buffer_parse_index() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+
+    srb.push(TestObject{ value: 32 });
+    assert_eq!(Some(0), srb.parse_index(-1));
+    assert_eq!(None, srb.parse_index(-2));
+
+    srb.fill_with(|| return TestObject{ value: 32 });
+
+    // Head is at 0, relative to head @ 0, -1, aka last written index, is 3
+    assert_eq!(Some(0), srb.parse_index(0));
+    assert_eq!(Some(3), srb.parse_index(-1));
+    assert_eq!(Some(2), srb.parse_index(-2));
+    assert_eq!(Some(1), srb.parse_index(-3));
+    assert_eq!(Some(0), srb.parse_index(-4));
+    assert_eq!(None, srb.parse_index(-5));
+
+    srb.skip();
+
+    assert_eq!(Some(0), srb.parse_index(0));
+    assert_eq!(Some(3), srb.parse_index(-1));
+    assert_eq!(Some(2), srb.parse_index(-2));
+    assert_eq!(Some(1), srb.parse_index(-3)); // Head has been erased here
+    assert_eq!(None, srb.parse_index(-4));
+
+    srb.push(TestObject{ value: 32 });
+
+    assert_eq!(Some(1), srb.parse_index(0));
+    assert_eq!(Some(0), srb.parse_index(-1));
+    assert_eq!(Some(3), srb.parse_index(-2));
+    assert_eq!(Some(2), srb.parse_index(-3));
+    assert_eq!(Some(1), srb.parse_index(-4));
+    assert_eq!(None, srb.parse_index(-5));
+}
+
+#[wasm_bindgen_test]
 fn test_ring_buffer_get() {
     let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
 
     srb.push(TestObject{ value: 32 });
-    assert_eq!(32, srb.get(-1).expect("Unable to get value").value);
+    assert_eq!(32, srb.get(-1).expect("Unable to get value at -1").value);
+    assert_eq!(32, srb.get_raw(-1).expect("Unable to get value at -1").value);
+    assert_eq!(32, srb.get_absolute(0).expect("Unable to get value at 0").value);
+    assert_eq!(32, srb.get_absolute_mut(0).expect("Unable to get value at 0").value);
+
+    // Test erronous values
+    assert!(srb.get(-2).is_none());
+    assert!(srb.get_raw(-3).is_none());
+    assert!(srb.get_absolute(3).is_none());
+    assert!(srb.get_absolute_mut(6).is_none());
+
+    assert_eq!(32, srb.dequeue().expect("Could not dequeue object").value);
+
+    assert!(srb.get(-1).is_none());
+    assert!(srb.get_raw(-1).is_none());
+    assert!(srb.get_absolute(0).is_none());
+    assert!(srb.get_absolute_mut(0).is_none());
+
+    // retest erronous values
+    assert!(srb.get(-2).is_none());
+    assert!(srb.get_raw(-2).is_none());
+    assert!(srb.get_absolute(3).is_none());
+    assert!(srb.get_absolute_mut(6).is_none());
+}
+
+#[wasm_bindgen_test]
+fn test_ring_buffer_fill_with() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+
+    srb.fill_with(|| return TestObject{ value: 32 });
+
+    assert_eq!(4, srb.len());
+
+    assert_eq!(32, srb.dequeue().expect("Could not dequeue object").value);
+    assert_eq!(32, srb.dequeue().expect("Could not dequeue object").value);
+    assert_eq!(32, srb.dequeue().expect("Could not dequeue object").value);
+    assert_eq!(32, srb.dequeue().expect("Could not dequeue object").value);
+
+    assert_eq!(0, srb.len());
+}
+
+#[wasm_bindgen_test]
+fn test_ring_buffer_clear() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+
+    srb.fill_with(|| return TestObject{ value: 32 });
+
+    assert_eq!(4, srb.len());
+
+    srb.clear();
+
+    assert_eq!(0, srb.len());
+
+    assert!(srb.get(-1).is_none());
+}
+
+#[wasm_bindgen_test]
+fn test_ring_buffer_skip() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+
+    srb.fill_with(|| return TestObject{ value: 32 });
+
+    assert_eq!(4, srb.len());
+
+    srb.skip();
+
+    assert_eq!(3, srb.len());
+    srb.push(TestObject{ value: 16 });
+
+    assert_eq!(16, srb.get(-1).expect("Could not get object at last index").value);
+}
+
+#[wasm_bindgen_test]
+fn test_ring_buffer_subscript() {
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+
+    srb.fill_with(|| return TestObject{ value: 32 });
+
+    for i in 0..srb.capacity() - 1 {
+        assert_eq!(32, srb[i as isize].value);
+        assert_eq!(32, srb[!(i as isize)].value);
+    }
 }
