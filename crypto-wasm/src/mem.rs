@@ -129,7 +129,7 @@ impl<'a> AllocatorPool<'a> {
         let mut allocators: BumpVec<'a, Bump> = BumpVec::with_capacity_in(num_allocators, &root_alloc);
 
         // fill_with doesn't seem to work for some reason, perhaps because it's capacity is f'ed idk why
-        for i in 0..length {
+        for i in 0..num_allocators {
             allocators.insert(i, Bump::with_capacity(size_of::<T>() * length));
         }
 
