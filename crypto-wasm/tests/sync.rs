@@ -7,7 +7,8 @@ use wasm_bindgen_test::*;
 use crypto_art::{
     log::*,
     sync::AtomicLock,
-    sync::AtomicLockJS
+    sync::AtomicLockJS,
+    sync::Arc
 };
 
 use lock_api::{
@@ -21,13 +22,14 @@ use js_sys::{
     Uint8Array
 };
 
-use alloc::sync::Arc;
+use bumpalo::Bump;
 use core::cell::RefCell;
 
 // TODO: Test this with Web Workers once I've begun work implementing multithreading via such
 #[wasm_bindgen_test]
 fn test_atomic_lock_access() {
-    let mutex: Arc<AtomicLock> = Arc::new(AtomicLock::default());
+    let scratch: Bump = Bump::with_capacity(1024);
+    let mutex: Arc<AtomicLock> = Arc::new_in(&scratch, AtomicLock::default());
     let l1: Arc<AtomicLock> = mutex.clone();
     let l2: Arc<AtomicLock> = mutex.clone();
 
@@ -73,8 +75,10 @@ fn test_mutex_atomic_lock() {
 // TODO: Test this with Web Workers once I've begun work implementing multithreading via such
 #[wasm_bindgen_test]
 fn test_js_atomic_lock_access() {
+    let scratch: Bump = Bump::with_capacity(1024);
     let sab: SharedArrayBuffer = SharedArrayBuffer::new(8);
-    let lock: Arc<AtomicLockJS> = Arc::new(
+    let lock: Arc<AtomicLockJS> = Arc::new_in(
+        &scratch,
         AtomicLockJS::new(
             RefCell::new(Uint8Array::new(&sab))
         )
@@ -89,7 +93,7 @@ fn test_js_atomic_lock_access() {
     assert!(!l2.try_lock());
 
     // Lock 1 unlock, unsafe block handled by lock_api Mutex.
-    // I am sure as well that lock_api handles cases in which other references can force 'unlock' the lock
+    // I am sure as well that lock_api handles cases in which other references can force 'unlock' the lock (lol)
     unsafe {
         l1.unlock();
         assert!(!l2.is_locked());

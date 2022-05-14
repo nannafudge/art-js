@@ -16,6 +16,7 @@ use ringbuffer::{
 use crypto_art::{
     mem::DataView,
     mem::SharedRingBuffer,
+    mem::AllocatorPool,
     sync::AtomicLockJS,
     log::*
 };
@@ -30,6 +31,8 @@ use serde::{Deserialize, Serialize};
 use js_sys::{
     SharedArrayBuffer
 };
+
+use bumpalo::Bump;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct TestObject {
@@ -326,5 +329,34 @@ fn test_ring_buffer_subscript() {
     for i in 0..srb.capacity() - 1 {
         assert_eq!(32, srb[i as isize].value);
         assert_eq!(32, srb[!(i as isize)].value);
+    }
+}
+
+/*
+* TODO: Further testing of the allocator_pool methods
+*/
+#[wasm_bindgen_test]
+fn test_allocator_pool() {
+    let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
+    let mut pool: AllocatorPool = AllocatorPool::new(&alloc);
+
+    for i in 0..3 {
+        pool.initialize::<usize>(i, 4);
+    }
+
+    for i in 0..pool.len() - 1 {
+        assert!(pool.has(i));
+    }
+}
+
+#[wasm_bindgen_test]
+fn test_allocator_pool_with_init() {
+    let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
+    let pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
+
+    assert_eq!(pool.len(), 4);
+
+    for i in 0..pool.len() - 1 {
+        assert!(pool.has(i));
     }
 }

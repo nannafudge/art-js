@@ -22,9 +22,16 @@ use js_sys::{
 use core::{
     cell::RefCell,
     default::Default,
+    marker::PhantomData,
+    ptr::NonNull,
     sync::atomic::AtomicUsize,
     sync::atomic::Ordering,
     ops::Deref
+};
+
+use bumpalo::{
+    Bump,
+    boxed::Box
 };
 
 use crate::log::*;
@@ -104,3 +111,71 @@ impl AtomicLockJS {
         return Atomics::load(self.view.as_ref().expect("AtomicLockJS is uninitialized").borrow().deref(), 0) == Ok(IS_LOCKED_JS);
     }
 }
+
+pub struct Arc<'a, T> {
+    ptr: NonNull<ArcInner<T>>,
+    marker: PhantomData<ArcInner<&'a T>>
+}
+
+pub struct ArcInner<T> {
+    rc: AtomicUsize,
+    data: T
+}
+
+impl<'a, T> Arc<'a, T> {
+    pub fn new_in(bump: &'a Bump, data: T) -> Arc<'a, T> {
+        let boxed: Box<ArcInner<T>> = Box::new_in(
+            ArcInner{
+                rc: AtomicUsize::new(1),
+                data
+            },
+            bump
+        );
+
+        return Self {
+            ptr: NonNull::new(Box::into_raw(boxed)).unwrap(),
+            marker: PhantomData
+        }
+    }
+}
+
+impl<'a, T> Deref for Arc<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        let inner = unsafe { self.ptr.as_ref() };
+        return &inner.data;
+    }
+}
+
+impl<'a, T> Clone for Arc<'a, T> {
+    fn clone(&self) -> Arc<'a, T> {
+        let inner = unsafe { self.ptr.as_ref() };
+
+        let old_rc = inner.rc.fetch_add(1, Ordering::Relaxed);
+
+        assert!(old_rc <= usize::MAX);
+
+        return Self {
+            ptr: self.ptr,
+            marker: PhantomData
+        };
+    }
+}
+
+impl<'a, T> Drop for Arc<'a, T> {
+    fn drop(&mut self) {
+        let inner = unsafe { self.ptr.as_ref() };
+
+        if inner.rc.fetch_sub(1, Ordering::Release) != 1 {
+            return;
+        }
+
+        core::sync::atomic::fence(Ordering::Acquire);
+
+        unsafe { Box::from_raw(self.ptr.as_ptr()) };
+    }
+}
+
+unsafe impl<'a, T: Sync + Send> Send for Arc<'a, T> {}
+unsafe impl<'a, T: Sync + Send> Sync for Arc<'a, T> {}

@@ -7,20 +7,28 @@ use wasm_bindgen_test::*;
 use crypto_art::log::*;
 
 use crypto_art::{
-    ecdh::{
-        Key,
-        Secret
-    },
-    tree::{
-        RatchetBranch,
-        RatchetTree,
-        TreeFactory,
-        SynchronousTreeFactory,
-        SynchronousRatchetTree,
-    }
+    ecdh::Key,
+    ecdh::Secret,
+    mem::AllocatorPool,
+    tree::RatchetBranch,
+    tree::RatchetTree
+};
+
+use bumpalo::{
+    Bump,
+    collections::Vec
 };
 
 use rand_core::OsRng;
+
+#[wasm_bindgen_test]
+fn test_tree_create() {
+    let memory: Bump = AllocatorPool::create_bumpalo::<Vec<Key>>(4);
+    let allocator: AllocatorPool = AllocatorPool::new_with_init::<Key>(&memory, 4, 32);
+    let tree: RatchetTree = RatchetTree::new();
+
+    //tree.insert();
+}
 
 #[wasm_bindgen_test]
 fn test_tree_create_single() {
