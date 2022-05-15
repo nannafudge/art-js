@@ -51,7 +51,6 @@ use crate::log::*;
 
 use crate::sync::Arc;
 
-// TODO: Use Arc for my scratch space so I can clear it once all 
 // TODO: Implement a Slice struct that contains the offset and a trait with helper methods to get correct bit offsets
 const LENGTH_BIT_U16: usize = 16; // Additional length added to each chunk
 const LENGTH_BIT_LOCK: usize = 8; // Additional bit to be used for locking access to the Buffer
@@ -118,7 +117,7 @@ pub struct AllocatorPool<'a> {
 
 #[derive(Debug, Clone)]
 pub struct AllocatorCell {
-    allocator: Arc<Bump>,
+    allocator: Arc<Bump>
 }
 
 impl AllocatorCell {

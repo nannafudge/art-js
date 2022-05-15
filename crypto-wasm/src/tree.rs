@@ -49,10 +49,10 @@ use hashbrown::{
 // Used to count number of active branches so we can 
 static BRANCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-const MEMORY_ROOT_NODE_INDEX: usize = 0;
-const MEMORY_ORPHAN_NODE_INDEX: usize = 1;
-const MEMORY_BRANCH_INDEX: usize = 2;
-const MEMORY_TREE_START_INDEX: usize = 3;
+pub const MEMORY_ROOT_NODE_INDEX: usize = 0;
+pub const MEMORY_ORPHAN_NODE_INDEX: usize = 1;
+pub const MEMORY_BRANCH_INDEX: usize = 2;
+pub const MEMORY_TREE_START_INDEX: usize = 3;
 
 pub fn is_even(i: usize) -> bool {
     return i & 0x1 == 0;
@@ -63,8 +63,14 @@ pub fn lsb(i: usize) -> usize {
     return (_i & (-_i)) as usize;
 }
 
+// Function rounds **up** an odd number to the next greatest even number
+// number remains unchanged if already even
+pub fn round_up(i: usize) -> usize {
+    return i + (i & 0x1);
+}
+
 pub fn get_next_index(i: usize) -> usize {
-    return (i + (i & 0x1)) / 2;
+    return round_up(i) / 2;
 }
 
 /*
@@ -130,23 +136,23 @@ impl<'a> RatchetBranch<'a> {
         }
     }
 
-    fn add_node(&mut self, index: usize, key: Key) {
-        self.nodes.insert(index, key);
+    pub fn add_node(&mut self, index: usize, key: Key) {
+        self.nodes.push(key);
     }
 
-    fn get_node(&self, index: &usize) -> Option<&Key> {
-        return self.nodes.get(*index);
+    pub fn get_node(&self, index: usize) -> Option<&Key> {
+        return self.nodes.get(index);
     }
 
-    fn iter(&self) -> core::slice::Iter<Key> {
+    pub fn iter(&self) -> core::slice::Iter<Key> {
         return self.nodes.iter();
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         return self.nodes.len();
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.nodes.clear();
     }
 }
@@ -189,38 +195,39 @@ impl Iterator for RatchetIter {
 *
 */
 impl<'a> RatchetTree<'a> {
-    pub fn new(memory: &'a mut AllocatorPool) -> Result<Self, RatchetError<'a>> {
+    pub fn new(memory: &'a mut AllocatorPool) -> Self {
+        assert!(memory.capacity() >= 4);
+
         let mut nodes: BumpVec<BumpVec<Key>> = BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_ROOT_NODE_INDEX));
         nodes.insert(0, BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_ORPHAN_NODE_INDEX)));
 
-        return Ok(
-            Self {
-                memory: memory,
-                nodes: nodes,
-                orphans: BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_BRANCH_INDEX))
-            }
-        );
+        return Self {
+            memory: memory,
+            nodes: nodes,
+            orphans: BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_BRANCH_INDEX))
+        }
     }
 
-    pub fn get_next_index(&mut self) -> usize {
-        match self.orphans.pop() {
-            Some(orphan) => return orphan,
+    pub fn get_next_index(&self) -> usize {
+        match self.orphans.get(0) {
+            Some(orphan) => return *orphan,
             None => return self.nodes[0].len() + 1
         }
     }
 
     pub fn height(&self) -> usize {
-        return (self.nodes[0].len() as f64).log(2.0).ceil() as usize;
+        let node_len: usize = self.nodes[0].len();
+        return if node_len == 0 { 0 } else { (node_len as f64).log(2.0).ceil() as usize };
     }
 
     pub fn iter(&self, index: usize) -> RatchetIter {
         return RatchetIter::new(index, self.height(), 0);
     }
 
-    /*pub fn ratchet(&mut self, index: usize, key: &Key) -> Result<RatchetBranch, RatchetError> {
+    pub fn ratchet(&self, index: usize, key: &Key, scratch: &'a AllocatorCell) -> Result<RatchetBranch, RatchetError> {
         let mut iterator: RatchetIter = self.iter(index);
         let mut branch: RatchetBranch = RatchetBranch::new(
-            &self.memory.get(RatchetMemoryLayout::BRANCH_MEMORY.into()),
+            scratch,
             index
         );
 
@@ -261,8 +268,8 @@ impl<'a> RatchetTree<'a> {
         return Ok(branch);
     }
 
-    pub fn commit(&'a mut self, branch: &RatchetBranch) -> Result<&Key, RatchetError> {
-        if branch.len() < self.height() - 1 { // Omit top most node in height, as it is the Tree Secret
+    pub fn commit(&mut self, branch: &RatchetBranch) -> Result<&Key, RatchetError> {
+        if branch.len() != self.height() { // Omit top most node in height, as it is the Tree Secret
             return Err(RatchetError{
                 reason: "Branch & Tree height mismatch: Committing branch would result in desynced state",
                 index: branch.root,
@@ -276,7 +283,7 @@ impl<'a> RatchetTree<'a> {
 
         while let Some(node) = iter.next() {
             if self.nodes.get(height).is_none() {
-                self.nodes.insert(height, &BumpVec::<'a, Key>::with_capacity_in(1, &self.memory.y_allocator)); 
+                self.nodes.insert(height, BumpVec::with_capacity_in(1, self.memory.get_ref(MEMORY_ROOT_NODE_INDEX))); 
             }
 
             self.nodes[height][index] = *node;
@@ -285,14 +292,18 @@ impl<'a> RatchetTree<'a> {
         }
 
         return Ok(&self.nodes[height][1]);
-    }*/
+    }
 
-    /*// Do not immediately commit the key, return a commit view so we can commit on txn confirmation
-    pub fn insert(&mut self, key: &Key) -> Result<RatchetBranch, RatchetError> {
-        return self.ratchet(self.get_next_index(), key);
+    // Do not immediately commit the key, return a commit view so we can commit on txn confirmation
+    pub fn insert(&self, key: &Key, scratch: &'a AllocatorCell) -> Result<RatchetBranch, RatchetError> {
+        return self.ratchet(self.get_next_index(), key, scratch);
     }
 
     pub fn rebalance() {
         return;
-    }*/
+    }
+
+    pub fn memory(&self) -> &'a AllocatorPool {
+        return self.memory;
+    }
 }

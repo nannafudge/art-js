@@ -176,7 +176,7 @@ impl<T> Clone for Arc<T> {
     fn clone(&self) -> Arc<T> {
         let inner = unsafe { self.ptr.as_ref() };
 
-        let old_rc = inner.rc.fetch_add(1, Ordering::Relaxed);
+        let old_rc = inner.rc.fetch_add(1, Ordering::Release);
 
         assert!(old_rc <= usize::MAX);
 
