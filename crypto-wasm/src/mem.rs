@@ -203,11 +203,11 @@ impl<'a> AllocatorPool<'a> {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str()).clone();
     }
 
-    pub fn get_ref(&mut self, index: usize) -> &AllocatorCell {
+    pub fn get_ref(&self, index: usize) -> &AllocatorCell {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str());
     }
 
-    pub fn get_mut(&mut self, index: usize) -> &AllocatorCell {
+    pub fn get_mut(&mut self, index: usize) -> &mut AllocatorCell {
         return self.allocators.get_mut(index).expect(format!("No allocator at specified index {:#}", index).as_str());
     }
 

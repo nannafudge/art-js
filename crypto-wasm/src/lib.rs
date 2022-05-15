@@ -10,7 +10,7 @@ pub mod errors;
 #[macro_use]
 pub mod log;
 pub mod sync;
-//pub mod tree;
+pub mod tree;
 pub mod ecdh;
 pub mod mem;
 

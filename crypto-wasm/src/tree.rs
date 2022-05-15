@@ -30,7 +30,10 @@ use core::{
 };
 
 use crate::sync::Arc;
-use crate::mem::AllocatorPool;
+use crate::mem::{
+    AllocatorPool,
+    AllocatorCell
+};
 
 use crate::ecdh::{
     Key
@@ -94,7 +97,6 @@ pub struct RatchetTree<'a> {
 
 pub struct RatchetBranch<'a> {
     root: usize,
-    memory: Arc<Bump>,
     nodes: BumpVec<'a, Key>
 }
 
@@ -121,11 +123,10 @@ impl RatchetIter {
 }
 
 impl<'a> RatchetBranch<'a> {
-    fn new(allocator: &'a Arc<Bump>, root: usize) -> Self {        
+    fn new(allocator: &'a AllocatorCell, root: usize) -> Self {        
         return Self {
             root: root,
-            nodes: BumpVec::new_in(&allocator),
-            memory: allocator.clone()
+            nodes: BumpVec::new_in(allocator)
         }
     }
 
@@ -188,23 +189,15 @@ impl Iterator for RatchetIter {
 *
 */
 impl<'a> RatchetTree<'a> {
-    pub fn new(memory: &'a AllocatorPool) -> Result<Self, RatchetError<'a>> {
-        if memory.capacity() < 4 {
-            return Err(RatchetError{
-                reason: "Memory pool provided is too small for tree",
-                height: 0,
-                index: 0
-            })
-        }
-
-        let mut nodes: BumpVec<BumpVec<Key>> = BumpVec::with_capacity_in(1, &memory.get(MEMORY_ROOT_NODE_INDEX));
-        nodes.insert(0, BumpVec::with_capacity_in(1, &memory.get(MEMORY_ORPHAN_NODE_INDEX)));
+    pub fn new(memory: &'a mut AllocatorPool) -> Result<Self, RatchetError<'a>> {
+        let mut nodes: BumpVec<BumpVec<Key>> = BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_ROOT_NODE_INDEX));
+        nodes.insert(0, BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_ORPHAN_NODE_INDEX)));
 
         return Ok(
             Self {
                 memory: memory,
                 nodes: nodes,
-                orphans: BumpVec::with_capacity_in(1, &memory.get(MEMORY_BRANCH_INDEX))
+                orphans: BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_BRANCH_INDEX))
             }
         );
     }
