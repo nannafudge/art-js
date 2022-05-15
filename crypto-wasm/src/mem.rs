@@ -121,10 +121,6 @@ pub struct AllocatorCell {
     allocator: Arc<Bump>,
 }
 
-pub trait PooledResource {}
-
-impl PooledResource for Bump {}
-
 impl AllocatorCell {
     pub fn new(root_allocator: &Bump, allocator: Bump) -> Self {
         return Self {
@@ -196,17 +192,22 @@ impl<'a> AllocatorPool<'a> {
 
     pub fn shrink(&mut self, length: usize) {
         self.allocators.truncate(length);
+        self.allocators.shrink_to_fit();
     }
 
     pub fn initialize<T>(&mut self, index: usize, length: usize) {
         self.allocators.insert(index, AllocatorCell::new(self.root_alloc, Bump::with_capacity(size_of::<T>() * length)));
     }
 
-    pub fn get(&self, index: usize) -> &AllocatorCell {
+    pub fn get(&self, index: usize) -> AllocatorCell {
+        return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str()).clone();
+    }
+
+    pub fn get_ref(&mut self, index: usize) -> &AllocatorCell {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str());
     }
 
-    pub fn get_mut(&mut self, index: usize) -> &mut AllocatorCell {
+    pub fn get_mut(&mut self, index: usize) -> &AllocatorCell {
         return self.allocators.get_mut(index).expect(format!("No allocator at specified index {:#}", index).as_str());
     }
 
@@ -222,12 +223,12 @@ impl<'a> AllocatorPool<'a> {
             }
 
             return Err(AllocatorPoolError{
-                reason: &format_args!("Unable to acquire mut ref for allocator at index {:#}", index).as_str().unwrap()
+                reason: "Unable to acquire mut ref for allocator at index"
             });
         }
 
         return Err(AllocatorPoolError{
-            reason: &format_args!("No allocator found at index {:#}", index).as_str().unwrap()
+            reason: "No allocator found at index"
         });
     }
 
@@ -252,7 +253,7 @@ impl<'a> core::fmt::Display for RingBufferError<'a> {
 }
 
 pub struct SharedRingBuffer<T: ?Sized + Serialize + DeserializeOwned> {
-    scratch: Bump,
+    scratch: AllocatorCell,
     raw: SharedArrayBuffer,
     view: DataView,
     head: usize,
@@ -265,7 +266,7 @@ pub struct SharedRingBuffer<T: ?Sized + Serialize + DeserializeOwned> {
 }
 
 impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
-    pub fn new(len: usize) -> Self {
+    pub fn new(root_allocator: &Bump, len: usize) -> Self {
         let slice_size: usize = (size_of::<T>() * 8) + LENGTH_BIT_U16; // 16 bits for size storage
         let view_len: usize = len * slice_size;
 
@@ -273,7 +274,7 @@ impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
         let raw: SharedArrayBuffer = SharedArrayBuffer::new((view_len + LENGTH_BIT_LOCK) as u32);
 
         return SharedRingBuffer {
-            scratch: Bump::with_capacity(view_len),
+            scratch: AllocatorCell::new(root_allocator, Bump::with_capacity(view_len)),
             view: DataView::new(&raw, 1, view_len),
             raw: raw,
             head: 0,
@@ -288,7 +289,8 @@ impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
 
     // Read a value at an index without consuming it
     pub fn read(&self, index: usize) -> Option<T> {
-        let mut buffer: BumpVec<u8> = bumpalo::vec![in &self.scratch; BLANK_CBOR_TAG; self.slice_size];
+        let local_scratch: AllocatorCell = self.scratch.clone();
+        let mut buffer: BumpVec<u8> = bumpalo::vec![in &local_scratch; BLANK_CBOR_TAG; self.slice_size];
 
         match self.read_into(index, buffer.as_mut_slice()) {
             Ok(size) => {
@@ -327,7 +329,8 @@ impl<T: ?Sized + Serialize + DeserializeOwned> SharedRingBuffer<T> {
     pub fn write(&mut self, value: &T, index: usize) {
         assert!(index < self.capacity);
 
-        let mut buffer: BumpVec<u8> = bumpalo::vec![in &self.scratch; BLANK_CBOR_TAG; self.slice_size];
+        let local_scratch: AllocatorCell = self.scratch.clone();
+        let mut buffer: BumpVec<u8> = bumpalo::vec![in &local_scratch; BLANK_CBOR_TAG; self.slice_size];
         let mut serializer = Serializer::new(SliceWrite::new(buffer.as_mut_slice()));
 
         value.serialize(&mut serializer).expect("Unable to serialize value");
@@ -511,6 +514,7 @@ impl<T: ?Sized + Serialize + DeserializeOwned> RingBufferExt<T> for SharedRingBu
         }
     }
 
+    // TODO: Make these return some form of Boxed result that autodrops?
     fn get_absolute(&self, index: usize) -> Option<&T> {
         match self.read(index) {
             Some(result) => {

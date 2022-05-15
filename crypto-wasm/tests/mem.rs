@@ -58,7 +58,8 @@ fn test_shared_data_view() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_enqueue_dequeue_sequential() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
     srb.push(TestObject{ value: 32 });
     srb.push(TestObject{ value: 16 });
     srb.push(TestObject{ value: 0 });
@@ -74,7 +75,8 @@ fn test_ring_buffer_enqueue_dequeue_sequential() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_enqueue_dequeue_staggered() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
     srb.push(TestObject{ value: 32 });
     srb.push(TestObject{ value: 16 });
 
@@ -94,7 +96,8 @@ fn test_ring_buffer_enqueue_dequeue_staggered() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_loop_fast() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     for _ in 0..4 {
         assert_eq!(srb.len(), 0);
@@ -115,7 +118,8 @@ fn test_ring_buffer_loop_fast() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_mutex() {
-    let srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
     let lock: AtomicLockJS = AtomicLockJS::new(RefCell::new(srb.uint8_view()));
     let mutex: Mutex<AtomicLockJS, SharedRingBuffer<TestObject>> = Mutex::const_new(lock, srb);
 
@@ -147,7 +151,8 @@ fn test_ring_buffer_mutex() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_mutex_loop_fast() {
-    let srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
     let lock: AtomicLockJS = AtomicLockJS::new(RefCell::new(srb.uint8_view()));
     let mutex: Mutex<AtomicLockJS, SharedRingBuffer<TestObject>> = Mutex::const_new(lock, srb);
 
@@ -174,7 +179,8 @@ fn test_ring_buffer_mutex_loop_fast() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_auxiliary_functions() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
     assert_eq!(srb.get_head_index(), 0);
     srb.push(TestObject{ value: 32 });
     assert_eq!(srb.get_head_index(), 1);
@@ -214,7 +220,8 @@ fn test_ring_buffer_auxiliary_functions() {
 */
 #[wasm_bindgen_test]
 fn test_ring_buffer_parse_index() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     srb.push(TestObject{ value: 32 });
     assert_eq!(Some(0), srb.parse_index(-1));
@@ -250,7 +257,8 @@ fn test_ring_buffer_parse_index() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_get() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     srb.push(TestObject{ value: 32 });
     assert_eq!(32, srb.get(-1).expect("Unable to get value at -1").value);
@@ -280,7 +288,8 @@ fn test_ring_buffer_get() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_fill_with() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     srb.fill_with(|| return TestObject{ value: 32 });
 
@@ -296,7 +305,8 @@ fn test_ring_buffer_fill_with() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_clear() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     srb.fill_with(|| return TestObject{ value: 32 });
 
@@ -311,7 +321,8 @@ fn test_ring_buffer_clear() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_skip() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     srb.fill_with(|| return TestObject{ value: 32 });
 
@@ -327,7 +338,8 @@ fn test_ring_buffer_skip() {
 
 #[wasm_bindgen_test]
 fn test_ring_buffer_subscript() {
-    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(4);
+    let root_alloc: Bump = Bump::with_capacity(1024);
+    let mut srb: SharedRingBuffer<TestObject> = SharedRingBuffer::new(&root_alloc, 4);
 
     srb.fill_with(|| return TestObject{ value: 32 });
 
@@ -364,26 +376,70 @@ fn test_allocator_pool_with_init() {
     for i in 0..pool.len() - 1 {
         assert!(pool.has(i));
     }
+
+    assert!(pool.capacity() >= 4);
 }
 
 #[wasm_bindgen_test]
 fn test_allocator_pool_cell_drop() {
     let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
-    let mut pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
+    let pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
 
     let previous_allocated_bytes: usize = pool.get(0).allocated_bytes();
 
     // After this block is complete, drop should be called on the AllocatorCell, which resets the allocator
     {
-        let cell: &mut AllocatorCell = &mut pool.get_mut(0).clone();
+        let cell: AllocatorCell = pool.get(0);
 
         cell.alloc_slice_fill_with(64, |_| return 1);
 
         assert_ne!(previous_allocated_bytes, cell.allocated_bytes());
     }
 
-    let cell: &mut AllocatorCell = &mut pool.get_mut(0).clone();
+    let cell: AllocatorCell = pool.get(0);
 
     // Memory should have been reset as the pool cell no longer had any references living to it
     assert_eq!(previous_allocated_bytes, cell.allocated_bytes());
+}
+
+#[wasm_bindgen_test]
+fn test_allocator_pool_clear() {
+    let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
+    let mut pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
+
+    let cell: AllocatorCell = pool.get(0);
+    assert!(pool.clear(0).is_err());
+    assert!(pool.clear(1).is_ok());
+
+    drop(cell);
+
+    assert!(pool.clear(0).is_ok());
+    assert!(pool.clear(1).is_ok());
+
+    assert!(pool.clear(5).is_err());
+    assert!(pool.clear(usize::MAX).is_err());
+}
+
+#[wasm_bindgen_test]
+fn test_allocator_pool_expand() {
+    let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
+    let mut pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
+
+    assert_eq!(pool.len(), 4);
+    assert_eq!(pool.capacity(), 4);
+
+    assert!(pool.expand(4).is_ok());
+    assert_eq!(pool.capacity(), 8);
+}
+
+#[wasm_bindgen_test]
+fn test_allocator_pool_shrink() {
+    let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
+    let mut pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
+
+    assert_eq!(pool.len(), 4);
+    assert_eq!(pool.capacity(), 4);
+
+    pool.shrink(2);
+    assert_eq!(pool.capacity(), 2);
 }

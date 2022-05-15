@@ -159,9 +159,7 @@ impl<T> Arc<T> {
 
     pub fn ref_count(&self) -> usize {
         let inner = unsafe { self.ptr.as_ref() };
-        let count = inner.rc.load(Ordering::SeqCst);
-
-        return if count == usize::MAX { 0 } else { count - 1 };
+        return inner.rc.load(Ordering::SeqCst);
     }
 }
 
