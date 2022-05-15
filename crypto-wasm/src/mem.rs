@@ -11,6 +11,7 @@ use core::{
     marker::Copy,
     option::Option,
     ops::Deref,
+    ops::DerefMut,
     ops::Range,
     ops::IndexMut,
     ops::Index,
@@ -48,6 +49,8 @@ use bumpalo::{
 #[macro_use]
 use crate::log::*;
 
+use crate::sync::Arc;
+
 // TODO: Use Arc for my scratch space so I can clear it once all 
 // TODO: Implement a Slice struct that contains the offset and a trait with helper methods to get correct bit offsets
 const LENGTH_BIT_U16: usize = 16; // Additional length added to each chunk
@@ -56,6 +59,8 @@ const START_INDEX: usize = LENGTH_BIT_U16 / 8;
 
 // 5 byte major value 30 is reserved/not for use, used to denote empty u8 cell
 const BLANK_CBOR_TAG: u8 = 30 << 3;
+
+const CELL_SIZE_BYTES: usize = size_of::<AllocatorCell>();
 
 #[wasm_bindgen]
 extern "C" {
@@ -94,8 +99,6 @@ extern "C" {
     pub fn set_uint32(this: &DataView, byte_offset: usize, value: u32);
 }
 
-const BUMPALO_REF_SIZE_BYTES: usize = size_of::<&Bump>();
-
 #[derive(Debug, Clone)]
 pub struct AllocatorPoolError<'a> {
     pub reason: &'a str
@@ -110,12 +113,56 @@ impl<'a> core::fmt::Display for AllocatorPoolError<'a> {
 #[derive(Debug)]
 pub struct AllocatorPool<'a> {
     root_alloc: &'a Bump,
-    allocators: BumpVec<'a, Bump>,
+    allocators: BumpVec<'a, AllocatorCell>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AllocatorCell {
+    allocator: Arc<Bump>,
+}
+
+pub trait PooledResource {}
+
+impl PooledResource for Bump {}
+
+impl AllocatorCell {
+    pub fn new(root_allocator: &Bump, allocator: Bump) -> Self {
+        return Self {
+            allocator: Arc::new_in(root_allocator, allocator)
+        }
+    }
+
+    pub fn get_mut(&mut self) -> Option<&mut Bump> {
+        if self.allocator.ref_count() <= 2 {
+            return unsafe { Some(self.allocator.get_mut_unchecked()) };
+        }
+
+        return None;
+    }
+}
+
+impl Deref for AllocatorCell {
+    type Target = Arc<Bump>;
+
+    fn deref(&self) -> &Arc<Bump> {
+        return &self.allocator;
+    }
+}
+
+impl Drop for AllocatorCell {
+    fn drop(&mut self) {
+        if self.allocator.ref_count() <= 2 {
+            unsafe { self.allocator.get_mut_unchecked().reset() };
+        }
+    }
+}
+
+// This probably leaks memory over time, lmao. Really could do with a proper arena or allocator.
+// As long as someone doesn't add an absolute ton of allocators, we won't have too many dead,
+// long lived AllocatorCell References on the root_alloc heap
 impl<'a> AllocatorPool<'a> {
     pub fn new(root_alloc: &'a Bump) -> Self {
-        let allocators: BumpVec<'a, Bump> = BumpVec::with_capacity_in(root_alloc.chunk_capacity() / BUMPALO_REF_SIZE_BYTES, &root_alloc);
+        let allocators: BumpVec<'a, AllocatorCell> = BumpVec::new_in(root_alloc);
 
         return AllocatorPool {
             root_alloc: root_alloc,
@@ -124,13 +171,13 @@ impl<'a> AllocatorPool<'a> {
     }
 
     pub fn new_with_init<T>(root_alloc: &'a Bump, num_allocators: usize, length: usize) -> Self {
-        assert!(length <= root_alloc.chunk_capacity() / BUMPALO_REF_SIZE_BYTES);
+        assert!(length <= root_alloc.chunk_capacity() / CELL_SIZE_BYTES);
 
-        let mut allocators: BumpVec<'a, Bump> = BumpVec::with_capacity_in(num_allocators, &root_alloc);
+        let mut allocators: BumpVec<'a, AllocatorCell> = BumpVec::with_capacity_in(num_allocators, &root_alloc);
 
         // fill_with doesn't seem to work for some reason, perhaps because it's capacity is f'ed idk why
         for i in 0..num_allocators {
-            allocators.insert(i, Bump::with_capacity(size_of::<T>() * length));
+            allocators.insert(i, AllocatorCell::new(root_alloc, Bump::with_capacity(size_of::<T>() * length)));
         }
 
         return AllocatorPool {
@@ -152,21 +199,36 @@ impl<'a> AllocatorPool<'a> {
     }
 
     pub fn initialize<T>(&mut self, index: usize, length: usize) {
-        self.allocators.insert(index, Bump::with_capacity(size_of::<T>() * length));
+        self.allocators.insert(index, AllocatorCell::new(self.root_alloc, Bump::with_capacity(size_of::<T>() * length)));
     }
 
-    pub fn get(&self, index: usize) -> &Bump {
+    pub fn get(&self, index: usize) -> &AllocatorCell {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str());
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> &mut AllocatorCell {
+        return self.allocators.get_mut(index).expect(format!("No allocator at specified index {:#}", index).as_str());
     }
 
     pub fn has(&self, index: usize) -> bool {
         return self.allocators.get(index).is_some();
     }
 
-    pub fn clear(&mut self, index: usize) {
-        if let Some(alloc) = self.allocators.get_mut(index) {
-            alloc.reset();
+    pub fn clear(&mut self, index: usize) -> Result<(), AllocatorPoolError<'a>> {
+        if let Some(cell) = self.allocators.get_mut(index) {
+            if let Some(allocator) = cell.allocator.get_mut() {
+                allocator.reset();
+                return Ok(());
+            }
+
+            return Err(AllocatorPoolError{
+                reason: &format_args!("Unable to acquire mut ref for allocator at index {:#}", index).as_str().unwrap()
+            });
         }
+
+        return Err(AllocatorPoolError{
+            reason: &format_args!("No allocator found at index {:#}", index).as_str().unwrap()
+        });
     }
 
     pub fn len(&self) -> usize {

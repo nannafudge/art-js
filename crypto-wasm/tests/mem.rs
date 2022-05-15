@@ -17,6 +17,7 @@ use crypto_art::{
     mem::DataView,
     mem::SharedRingBuffer,
     mem::AllocatorPool,
+    mem::AllocatorCell,
     sync::AtomicLockJS,
     log::*
 };
@@ -32,7 +33,11 @@ use js_sys::{
     SharedArrayBuffer
 };
 
-use bumpalo::Bump;
+use bumpalo::{
+    Bump,
+    boxed::Box,
+    collections::Vec
+};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 struct TestObject {
@@ -359,4 +364,26 @@ fn test_allocator_pool_with_init() {
     for i in 0..pool.len() - 1 {
         assert!(pool.has(i));
     }
+}
+
+#[wasm_bindgen_test]
+fn test_allocator_pool_cell_drop() {
+    let alloc: Bump = AllocatorPool::create_bumpalo::<&Bump>(4);
+    let mut pool: AllocatorPool = AllocatorPool::new_with_init::<usize>(&alloc, 4, 4);
+
+    let previous_allocated_bytes: usize = pool.get(0).allocated_bytes();
+
+    // After this block is complete, drop should be called on the AllocatorCell, which resets the allocator
+    {
+        let cell: &mut AllocatorCell = &mut pool.get_mut(0).clone();
+
+        cell.alloc_slice_fill_with(64, |_| return 1);
+
+        assert_ne!(previous_allocated_bytes, cell.allocated_bytes());
+    }
+
+    let cell: &mut AllocatorCell = &mut pool.get_mut(0).clone();
+
+    // Memory should have been reset as the pool cell no longer had any references living to it
+    assert_eq!(previous_allocated_bytes, cell.allocated_bytes());
 }

@@ -29,6 +29,7 @@ use core::{
     ops::Deref
 };
 
+use crate::sync::Arc;
 use crate::mem::AllocatorPool;
 
 use crate::ecdh::{
@@ -93,7 +94,7 @@ pub struct RatchetTree<'a> {
 
 pub struct RatchetBranch<'a> {
     root: usize,
-    memory: &'a Bump,
+    memory: Arc<Bump>,
     nodes: BumpVec<'a, Key>
 }
 
@@ -120,13 +121,11 @@ impl RatchetIter {
 }
 
 impl<'a> RatchetBranch<'a> {
-    fn new(allocator: &'a Bump, root: usize) -> Self {
-        BRANCH_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
-
+    fn new(allocator: &'a Arc<Bump>, root: usize) -> Self {        
         return Self {
             root: root,
-            memory: allocator,
-            nodes: BumpVec::new_in(allocator)
+            nodes: BumpVec::new_in(&allocator),
+            memory: allocator.clone()
         }
     }
 
@@ -148,14 +147,6 @@ impl<'a> RatchetBranch<'a> {
 
     fn clear(&mut self) {
         self.nodes.clear();
-    }
-}
-
-impl<'a> Drop for RatchetBranch<'a> {
-    fn drop(&mut self) {
-        if BRANCH_COUNT.fetch_sub(1, AtomicOrdering::SeqCst) == 1 {
-            self.memory.reset();
-        }
     }
 }
 

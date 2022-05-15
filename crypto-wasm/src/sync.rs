@@ -112,18 +112,20 @@ impl AtomicLockJS {
     }
 }
 
-pub struct Arc<'a, T> {
+#[derive(Debug)]
+pub struct Arc<T> {
     ptr: NonNull<ArcInner<T>>,
-    marker: PhantomData<ArcInner<&'a T>>
+    marker: PhantomData<ArcInner<T>>
 }
 
+#[derive(Debug)]
 pub struct ArcInner<T> {
     rc: AtomicUsize,
     data: T
 }
 
-impl<'a, T> Arc<'a, T> {
-    pub fn new_in(bump: &'a Bump, data: T) -> Arc<'a, T> {
+impl<T> Arc<T> {
+    pub fn new_in(bump: &Bump, data: T) -> Arc<T> {
         let boxed: Box<ArcInner<T>> = Box::new_in(
             ArcInner{
                 rc: AtomicUsize::new(1),
@@ -137,9 +139,33 @@ impl<'a, T> Arc<'a, T> {
             marker: PhantomData
         }
     }
+
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        if self.is_unique() {
+            return unsafe { Some(self.get_mut_unchecked()) };
+        }
+
+        return None;
+    }
+
+    pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
+        return &mut (*self.ptr.as_ptr()).data;
+    }
+
+    pub fn is_unique(&mut self) -> bool {
+        let inner = unsafe { self.ptr.as_ref() };
+        return inner.rc.load(Ordering::Acquire) == 1;
+    }
+
+    pub fn ref_count(&self) -> usize {
+        let inner = unsafe { self.ptr.as_ref() };
+        let count = inner.rc.load(Ordering::SeqCst);
+
+        return if count == usize::MAX { 0 } else { count - 1 };
+    }
 }
 
-impl<'a, T> Deref for Arc<'a, T> {
+impl<T> Deref for Arc<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -148,8 +174,8 @@ impl<'a, T> Deref for Arc<'a, T> {
     }
 }
 
-impl<'a, T> Clone for Arc<'a, T> {
-    fn clone(&self) -> Arc<'a, T> {
+impl<T> Clone for Arc<T> {
+    fn clone(&self) -> Arc<T> {
         let inner = unsafe { self.ptr.as_ref() };
 
         let old_rc = inner.rc.fetch_add(1, Ordering::Relaxed);
@@ -163,7 +189,7 @@ impl<'a, T> Clone for Arc<'a, T> {
     }
 }
 
-impl<'a, T> Drop for Arc<'a, T> {
+impl<T> Drop for Arc<T> {
     fn drop(&mut self) {
         let inner = unsafe { self.ptr.as_ref() };
 
@@ -177,5 +203,5 @@ impl<'a, T> Drop for Arc<'a, T> {
     }
 }
 
-unsafe impl<'a, T: Sync + Send> Send for Arc<'a, T> {}
-unsafe impl<'a, T: Sync + Send> Sync for Arc<'a, T> {}
+unsafe impl<'a, T: Sync + Send> Send for Arc<T> {}
+unsafe impl<'a, T: Sync + Send> Sync for Arc<T> {}

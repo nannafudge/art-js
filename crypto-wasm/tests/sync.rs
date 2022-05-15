@@ -23,6 +23,8 @@ use js_sys::{
 };
 
 use bumpalo::Bump;
+use bumpalo::collections::Vec;
+
 use core::cell::RefCell;
 
 // TODO: Test this with Web Workers once I've begun work implementing multithreading via such
