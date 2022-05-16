@@ -46,9 +46,7 @@ use bumpalo::{
     collections::CollectionAllocErr
 };
 
-#[macro_use]
 use crate::log::*;
-
 use crate::sync::Arc;
 
 // TODO: Implement a Slice struct that contains the offset and a trait with helper methods to get correct bit offsets
@@ -198,7 +196,7 @@ impl<'a> AllocatorPool<'a> {
         self.allocators.insert(index, AllocatorCell::new(self.root_alloc, Bump::with_capacity(size_of::<T>() * length)));
     }
 
-    pub fn get(&self, index: usize) -> AllocatorCell {
+    pub fn get<'caller>(&self, index: usize) -> AllocatorCell {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str()).clone();
     }
 

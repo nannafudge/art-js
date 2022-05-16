@@ -201,5 +201,5 @@ impl<T> Drop for Arc<T> {
     }
 }
 
-unsafe impl<'a, T: Sync + Send> Send for Arc<T> {}
-unsafe impl<'a, T: Sync + Send> Sync for Arc<T> {}
+unsafe impl<T: Sync + Send> Send for Arc<T> {}
+unsafe impl<T: Sync + Send> Sync for Arc<T> {}

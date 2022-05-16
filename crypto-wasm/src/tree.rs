@@ -39,6 +39,7 @@ use crate::ecdh::{
     Key
 };
 use crate::errors::RatchetError;
+use crate::log::*;
 
 use hashbrown::{
     HashSet,
@@ -102,8 +103,8 @@ pub struct RatchetTree<'a> {
 }
 
 pub struct RatchetBranch<'a> {
-    root: usize,
-    nodes: BumpVec<'a, Key>
+    pub root: usize,
+    pub nodes: BumpVec<'a, Key>
 }
 
 pub struct RatchetIter {
@@ -194,17 +195,17 @@ impl Iterator for RatchetIter {
 * ... and so forth
 *
 */
-impl<'a> RatchetTree<'a> {
-    pub fn new(memory: &'a mut AllocatorPool) -> Self {
+impl<'tree> RatchetTree<'tree> {
+    pub fn new(memory: &'tree mut AllocatorPool) -> Self {
         assert!(memory.capacity() >= 4);
 
-        let mut nodes: BumpVec<BumpVec<Key>> = BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_ROOT_NODE_INDEX));
-        nodes.insert(0, BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_ORPHAN_NODE_INDEX)));
+        let mut nodes: BumpVec<BumpVec<Key>> = BumpVec::with_capacity_in(16, memory.get_ref(MEMORY_ROOT_NODE_INDEX));
+        nodes.insert(0, BumpVec::new_in(memory.get_ref(MEMORY_ORPHAN_NODE_INDEX)));
 
         return Self {
             memory: memory,
             nodes: nodes,
-            orphans: BumpVec::with_capacity_in(1, memory.get_ref(MEMORY_BRANCH_INDEX))
+            orphans: BumpVec::new_in(memory.get_ref(MEMORY_BRANCH_INDEX))
         }
     }
 
@@ -224,8 +225,17 @@ impl<'a> RatchetTree<'a> {
         return RatchetIter::new(index, self.height(), 0);
     }
 
-    pub fn ratchet(&self, index: usize, key: &Key, scratch: &'a AllocatorCell) -> Result<RatchetBranch, RatchetError> {
-        let mut iterator: RatchetIter = self.iter(index);
+    pub fn ensure_layer_present(&mut self, height: usize, memory: &'tree AllocatorCell) {
+        if self.nodes.get(height).is_none() {
+            let layer: BumpVec<Key> = BumpVec::new_in(memory);
+            layer.insert(0, Key::default());
+
+            self.nodes.insert(height, layer); 
+        }
+    }
+
+    pub fn ratchet<'caller>(this: &Self, index: usize, key: &Key, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
+        let mut iterator: RatchetIter = this.iter(index);
         let mut branch: RatchetBranch = RatchetBranch::new(
             scratch,
             index
@@ -238,7 +248,7 @@ impl<'a> RatchetTree<'a> {
         while let Some(key_tuple) = iterator.next() {
             let height: usize = key_tuple.0;
 
-            if let Some(layer) = self.nodes.get(height) {
+            if let Some(layer) = this.nodes.get(height) {
                 let k1: Option<&Key> = layer.get(key_tuple.1); // Key 1
                 let k2: Option<&Key> = layer.get(key_tuple.2); // Key 2
 
@@ -268,8 +278,8 @@ impl<'a> RatchetTree<'a> {
         return Ok(branch);
     }
 
-    pub fn commit(&mut self, branch: &RatchetBranch) -> Result<&Key, RatchetError> {
-        if branch.len() != self.height() { // Omit top most node in height, as it is the Tree Secret
+    pub fn commit<'caller>(tree: &'caller mut Self, branch: &'caller RatchetBranch) -> Result<&'caller Key, RatchetError<'caller>> {
+        if branch.len() < tree.height() { // Omit top most node in height, as it is the Tree Secret
             return Err(RatchetError{
                 reason: "Branch & Tree height mismatch: Committing branch would result in desynced state",
                 index: branch.root,
@@ -282,28 +292,42 @@ impl<'a> RatchetTree<'a> {
         let mut index: usize = branch.root;
 
         while let Some(node) = iter.next() {
-            if self.nodes.get(height).is_none() {
-                self.nodes.insert(height, BumpVec::with_capacity_in(1, self.memory.get_ref(MEMORY_ROOT_NODE_INDEX))); 
+            tree.ensure_layer_present(height, &tree.memory.get(height));
+
+            let layer = &mut tree.nodes[height];
+            
+            if index > layer.len() {
+                assert!(layer.try_reserve_exact(index - layer.len()).is_ok());
             }
 
-            self.nodes[height][index] = *node;
+            info!("{:?}", layer.len());
+            layer.insert(1, *node);
+
+            //tree.nodes[height].insert(index, *node);
             height += 1;
-            index += 1;
+            index = get_next_index(index);
+
+            return Ok(node);
         }
 
-        return Ok(&self.nodes[height][1]);
+        //return Ok(&tree.nodes[height][1]);
+        return Err(RatchetError{
+            reason: "poopiee",
+            index: branch.root,
+            height: branch.len()
+        });
     }
 
     // Do not immediately commit the key, return a commit view so we can commit on txn confirmation
-    pub fn insert(&self, key: &Key, scratch: &'a AllocatorCell) -> Result<RatchetBranch, RatchetError> {
-        return self.ratchet(self.get_next_index(), key, scratch);
+    pub fn insert<'caller>(this: &Self, key: &Key, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
+        return RatchetTree::ratchet(this, this.get_next_index(), key, scratch);
     }
 
     pub fn rebalance() {
         return;
     }
 
-    pub fn memory(&self) -> &'a AllocatorPool {
+    pub fn memory(&self) -> &'tree AllocatorPool {
         return self.memory;
     }
 }
