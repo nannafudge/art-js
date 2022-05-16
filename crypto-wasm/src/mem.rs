@@ -107,7 +107,7 @@ impl<'a> core::fmt::Display for AllocatorPoolError<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AllocatorPool<'a> {
     root_alloc: &'a Bump,
     allocators: BumpVec<'a, AllocatorCell>,
@@ -196,7 +196,7 @@ impl<'a> AllocatorPool<'a> {
         self.allocators.insert(index, AllocatorCell::new(self.root_alloc, Bump::with_capacity(size_of::<T>() * length)));
     }
 
-    pub fn get<'caller>(&self, index: usize) -> AllocatorCell {
+    pub fn get(&self, index: usize) -> AllocatorCell {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str()).clone();
     }
 
