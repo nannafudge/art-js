@@ -47,9 +47,6 @@ use hashbrown::{
     hash_map
 };
 
-// Used to count number of active branches so we can 
-static BRANCH_COUNT: AtomicUsize = AtomicUsize::new(0);
-
 pub const MEMORY_ROOT_NODE_INDEX: usize = 0;
 pub const MEMORY_ORPHAN_NODE_INDEX: usize = 1;
 pub const MEMORY_BRANCH_INDEX: usize = 2;
@@ -99,12 +96,13 @@ pub trait TreeOperations {
 pub struct RatchetTree<'a> {
     memory: &'a AllocatorPool<'a>,
     nodes: BumpVec<'a, BumpVec<'a, Key>>,
-    orphans: BumpVec<'a, usize>
+    orphans: BumpVec<'a, usize>,
+    pub tombstone: Option<Key>
 }
 
 pub struct RatchetBranch<'a> {
     pub root: usize,
-    pub nodes: BumpVec<'a, Option<Key>>
+    pub nodes: BumpVec<'a, Key>
 }
 
 pub struct RatchetIter {
@@ -137,15 +135,15 @@ impl<'a> RatchetBranch<'a> {
         }
     }
 
-    pub fn add_node(&mut self, key: Option<Key>) {
+    pub fn add_node(&mut self, key: Key) {
         self.nodes.push(key);
     }
 
-    pub fn get_node(&self, index: usize) -> Option<&Option<Key>> {
+    pub fn get_node(&self, index: usize) -> Option<&Key> {
         return self.nodes.get(index);
     }
 
-    pub fn get_last(&self) -> Option<&Option<Key>> {
+    pub fn get_last(&self) -> Option<&Key> {
         if self.len() == 0 {
             return None;
         }
@@ -153,7 +151,7 @@ impl<'a> RatchetBranch<'a> {
         return self.nodes.get(self.len() - 1);
     }
 
-    pub fn iter(&self) -> core::slice::Iter<Option<Key>> {
+    pub fn iter(&self) -> core::slice::Iter<Key> {
         return self.nodes.iter();
     }
 
@@ -175,7 +173,7 @@ impl Iterator for RatchetIter {
         * First of all, it prevents usage of any index value < 0, as it's a fenwick tree
         * Secondly, it ensures the iterator properly exits once we no longer have at least (2) key pairs to DH with
         */
-        if self.curr_index < 2 {
+        if self.curr_index < 2 && self.curr_height >= self.height {
             return None;
         }
 
@@ -216,7 +214,8 @@ impl<'tree> RatchetTree<'tree> {
         return Self {
             memory: memory,
             nodes: nodes,
-            orphans: BumpVec::new_in(memory.get_ref(MEMORY_ORPHAN_NODE_INDEX))
+            orphans: BumpVec::new_in(memory.get_ref(MEMORY_ORPHAN_NODE_INDEX)),
+            tombstone: Some(Key::default())
         }
     }
 
@@ -253,7 +252,7 @@ impl<'tree> RatchetTree<'tree> {
         );
 
         // Root of the branch is our node
-        branch.add_node(Some(*key));
+        branch.add_node(*key);
 
         // Two phase commit
         while let Some(key_tuple) = iterator.next() {
@@ -261,16 +260,25 @@ impl<'tree> RatchetTree<'tree> {
 
             if let Some(layer) = tree.nodes.get(height) {
                 // Seed Key1 from previous DH result, if available
-                let mut k1: Option<&Key> = branch.get_last().unwrap().as_ref();
+                let k1: Option<&Key> = branch.get_last();
                 let k2: Option<&Key> = layer.get(key_tuple.2); // Key 2
 
-                if k2.is_none() {
-                    branch.add_node(None);
+                let no_key1: bool = k1.is_none() || k1 == tree.tombstone.as_ref();
+                let no_key2: bool = k2.is_none() || k2 == tree.tombstone.as_ref();
+
+                if no_key1 && no_key2 {
+                    branch.add_node(tree.tombstone.unwrap());
                     continue;
                 }
 
-                if k1.is_none() {
-                    k1 = Some(key);
+                if !no_key1 && no_key2 {
+                    branch.add_node(*k1.unwrap());
+                    continue;
+                }
+
+                if no_key1 && !no_key2 {
+                    branch.add_node(*k2.unwrap());
+                    continue;
                 }
 
                 // I don't implicitly convert into an Option<Key> here because I want to explicitly
@@ -278,7 +286,7 @@ impl<'tree> RatchetTree<'tree> {
                 let res: Result<Key, crate::errors::ECError> = k1.unwrap().diffie_hellman(k2.unwrap());
 
                 match res {
-                    Ok(key) => branch.add_node(Some(key)),
+                    Ok(key) => branch.add_node(key),
                     Err(_) => {
                         return Err(RatchetError{
                             reason: "Diffie hellman failed",
@@ -302,22 +310,28 @@ impl<'tree> RatchetTree<'tree> {
             });
         }
 
-        let mut iter: core::slice::Iter<Option<Key>> = branch.iter();
+        let mut iter: core::slice::Iter<Key> = branch.iter();
         let mut height: usize = 0;
         let mut index: usize = branch.root;
 
-        while let Some(node) = iter.next() {
-            tree.ensure_layer_present(height, tree.memory.get_ref(MEMORY_TREE_START_INDEX + height));
+        if tree.orphans.get(0) == Some(&index) {
+            tree.orphans.remove(0); // remove for BumpVec shifts elements to the left
+        }
 
-            if let Some(key) = node {
-                let layer: &mut BumpVec<Key> = &mut tree.nodes[height];
-                
-                // Lol Vec.insert shifts elements to the right and there's no nice way to allocate manually
-                if index >= layer.len() {
-                    layer.insert(index, *key);
-                } else {
-                    layer[index] = *key;
-                }
+        // If we're committing a deletion, push the index to orphaned indexes for re-use later
+        if branch.nodes.get(0) == tree.tombstone.as_ref() {
+            tree.orphans.push(index);
+        }
+
+        while let Some(key) = iter.next() {
+            tree.ensure_layer_present(height, tree.memory.get_ref(MEMORY_TREE_START_INDEX + height));
+            let layer: &mut BumpVec<Key> = &mut tree.nodes[height];
+
+            // Lol Vec.insert shifts elements to the right and there's no nice way to allocate manually
+            if index >= layer.len() {
+                layer.insert(index, *key);
+            } else {
+                layer[index] = *key;
             }
 
             height += 1;
@@ -332,6 +346,32 @@ impl<'tree> RatchetTree<'tree> {
         return RatchetTree::ratchet(tree, tree.get_next_index(), key, &scratch);
     }
 
+    pub fn remove<'caller>(tree: &Self, index: usize, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
+        // Lifetimes and mutable borrows, seriously it's pathetic, I can't do any graceful programming in this abhorrant language
+        // please if anyone knows a more graceful way around this fucking shit let me know, I'm pulling my hair out. Just ugly
+        // and redundant code, line after line due to mutability. Sigh.
+        //tree.set(0, index, Key::default())?;
+        let leaf_node_len: usize = tree.get_layer_len(0);
+        let sibling_index: usize = get_sibling_index(index);
+        if index >= leaf_node_len || sibling_index >= leaf_node_len {
+            return Err(RatchetError{
+                reason: "index provided larger than leaf-node array len",
+                index: index,
+                height: 0
+            });
+        }
+
+        /*if tree.get(0, index) == tree.tombstone.as_ref()  {
+            return Err(RatchetError{
+                reason: "Key at index has already been removed",
+                index: index,
+                height: 0
+            });
+        }*/
+
+        return RatchetTree::ratchet(tree, index, tree.tombstone.as_ref().unwrap(), scratch);
+    }
+
     pub fn get(&self, height: usize, index: usize) -> Option<&Key> {
         if let Some(layer) = self.nodes.get(height) {
             return layer.get(index);
@@ -340,8 +380,38 @@ impl<'tree> RatchetTree<'tree> {
         return None;
     }
 
+    pub fn set(&mut self, height: usize, index: usize, value: Key) -> Result<(), RatchetError> {
+        if let Some(layer) = self.nodes.get_mut(height) {
+            if index >= layer.len() {
+                return Err(RatchetError{
+                    reason: "index provided larger than leaf-node array len",
+                    index: index,
+                    height: 0
+                });
+            }
+
+            layer[index] = value;
+
+            return Ok(());
+        }
+
+        return Err(RatchetError{
+            reason: "No index found at specified height",
+            index: index,
+            height: height
+        });
+    }
+
     pub fn get_layer(&self, height: usize) -> Option<&BumpVec<Key>> {
         return self.nodes.get(height);
+    }
+    
+    pub fn get_layer_len(&self, height: usize) -> usize {
+        if let Some(layer) = self.nodes.get(height) {
+            return layer.len();
+        }
+
+        return 0;
     }
 
     pub fn memory(&self) -> &AllocatorPool {
