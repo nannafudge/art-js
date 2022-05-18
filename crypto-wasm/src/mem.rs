@@ -201,7 +201,7 @@ impl<'a> AllocatorPool<'a> {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str()).clone();
     }
 
-    pub fn get_ref<'c>(&'c self, index: usize) -> &'c AllocatorCell {
+    pub fn get_ref(&self, index: usize) -> &AllocatorCell {
         return self.allocators.get(index).expect(format!("No allocator at specified index {:#}", index).as_str());
     }
 

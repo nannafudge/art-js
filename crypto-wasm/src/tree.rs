@@ -85,7 +85,7 @@ pub fn get_sibling_index(i: usize) -> usize {
     return i + 1
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RatchetErrorCause {
     OOM,
     INVALID_BRANCH,
@@ -109,10 +109,9 @@ impl<'a> fmt::Display for RatchetError<'a> {
 
 // TODO: Implement Clone/Copy for tree cache
 //#[derive(Debug)]
-pub struct RatchetTree<'a> {
-    memory: &'a AllocatorPool<'a>,
-    nodes: BumpVec<'a, BumpVec<'a, Key>>,
-    orphans: BumpVec<'a, usize>,
+pub struct RatchetTree<'tree> {
+    nodes: BumpVec<'tree, BumpVec<'tree, Key>>,
+    orphans: BumpVec<'tree, usize>,
     pub tombstone: Option<Key>
 }
 
@@ -228,7 +227,6 @@ impl<'tree> RatchetTree<'tree> {
         nodes.insert(0, first_layer);
 
         return Self {
-            memory: memory,
             nodes: nodes,
             orphans: BumpVec::new_in(memory.get_ref(MEMORY_ORPHAN_NODE_INDEX)),
             tombstone: Some(Key::default())
@@ -318,7 +316,7 @@ impl<'tree> RatchetTree<'tree> {
         return Ok(branch);
     }
 
-    pub fn commit(&mut self, branch: &RatchetBranch) -> Result<&Key, RatchetError> {
+    pub fn commit(&mut self, branch: &RatchetBranch, memory: &'tree AllocatorPool) -> Result<&Key, RatchetError> {
         if branch.len() < self.height() {
             return Err(RatchetError{
                 description: "Branch & Tree height mismatch: Committing branch would result in desynced state",
@@ -328,7 +326,7 @@ impl<'tree> RatchetTree<'tree> {
             });
         }
 
-        if MEMORY_TREE_START_INDEX + branch.len() > self.memory.len() {
+        if MEMORY_TREE_START_INDEX + branch.len() > memory.len() {
             return Err(RatchetError{
                 description: "Not enough memory available in memory_pool for tree",
                 cause: RatchetErrorCause::OOM,
@@ -355,7 +353,7 @@ impl<'tree> RatchetTree<'tree> {
         let mut height: usize = 0;
 
         while let Some(key) = iter.next() {
-            self.ensure_layer_present(height, self.memory.get_ref(MEMORY_TREE_START_INDEX + height));
+            self.ensure_layer_present(height, memory.get_ref(MEMORY_TREE_START_INDEX + height));
             let layer: &mut BumpVec<Key> = &mut self.nodes[height];
 
             // Lol Vec.insert shifts elements to the right and there's no nice way to allocate manually
@@ -370,7 +368,7 @@ impl<'tree> RatchetTree<'tree> {
         }
 
         if height == 0 { height = 1 };
-        return Ok(&self.nodes[height][1]);
+        return Ok(&self.nodes[height - 1][1]);
     }
 
     // Do not immediately commit the key, return a commit view so we can commit on txn confirmation
@@ -436,9 +434,5 @@ impl<'tree> RatchetTree<'tree> {
         }
 
         return 0;
-    }
-
-    pub fn memory(&self) -> &AllocatorPool {
-        return self.memory;
     }
 }
