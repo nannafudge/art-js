@@ -26,7 +26,8 @@ use core::{
     task::Context,
     future::Future,
     pin::Pin,
-    ops::Deref
+    ops::Deref,
+    fmt
 };
 
 use crate::sync::Arc;
@@ -38,7 +39,6 @@ use crate::mem::{
 use crate::ecdh::{
     Key
 };
-use crate::errors::RatchetError;
 use crate::log::*;
 
 use hashbrown::{
@@ -85,10 +85,26 @@ pub fn get_sibling_index(i: usize) -> usize {
     return i + 1
 }
 
-pub trait TreeOperations {
-    fn search(&self);
-    fn ratchet(&mut self, index: usize) -> Result<&Key, RatchetError>;
-    fn insert(&mut self, key: &Key) -> Result<&Key, RatchetError>;
+#[derive(Debug, Clone)]
+pub enum RatchetErrorCause {
+    OOM,
+    INVALID_BRANCH,
+    INVALID_INDEX,
+    INVALID_HEIGHT
+}
+
+#[derive(Debug, Clone)]
+pub struct RatchetError<'a> {
+    pub description: &'a str,
+    pub cause: RatchetErrorCause,
+    pub index: usize,
+    pub height: usize
+}
+
+impl<'a> fmt::Display for RatchetError<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        return write!(f, "Invalid Ratchet Tree Operation: {:?}, height: {:#}, index: {:#}", self.description, self.height, self.index);
+    }
 }
 
 // TODO: Implement Clone/Copy for tree cache
@@ -202,7 +218,7 @@ impl Iterator for RatchetIter {
 *
 */
 impl<'tree> RatchetTree<'tree> {
-    pub fn new(memory: &'tree mut AllocatorPool) -> Self {
+    pub fn new(memory: &'tree AllocatorPool) -> Self {
         assert!(memory.capacity() >= 4);
 
         let mut nodes: BumpVec<BumpVec<Key>> = BumpVec::with_capacity_in(16, memory.get_ref(MEMORY_ROOT_NODE_INDEX));
@@ -244,9 +260,9 @@ impl<'tree> RatchetTree<'tree> {
         }
     }
 
-    pub fn ratchet<'caller>(tree: &Self, index: usize, key: &Key, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
-        let mut iterator: RatchetIter = tree.iter(index);
-        let mut branch: RatchetBranch = RatchetBranch::new(
+    pub fn ratchet<'caller>(&self, index: usize, key: &Key, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
+        let mut iterator: RatchetIter = self.iter(index);
+        let mut branch: RatchetBranch<'caller> = RatchetBranch::new(
             scratch,
             index
         );
@@ -258,16 +274,16 @@ impl<'tree> RatchetTree<'tree> {
         while let Some(key_tuple) = iterator.next() {
             let height: usize = key_tuple.0;
 
-            if let Some(layer) = tree.nodes.get(height) {
+            if let Some(layer) = self.nodes.get(height) {
                 // Seed Key1 from previous DH result, if available
                 let k1: Option<&Key> = branch.get_last();
                 let k2: Option<&Key> = layer.get(key_tuple.2); // Key 2
 
-                let no_key1: bool = k1.is_none() || k1 == tree.tombstone.as_ref();
-                let no_key2: bool = k2.is_none() || k2 == tree.tombstone.as_ref();
+                let no_key1: bool = k1.is_none() || k1 == self.tombstone.as_ref();
+                let no_key2: bool = k2.is_none() || k2 == self.tombstone.as_ref();
 
                 if no_key1 && no_key2 {
-                    branch.add_node(tree.tombstone.unwrap());
+                    branch.add_node(self.tombstone.unwrap());
                     continue;
                 }
 
@@ -289,7 +305,8 @@ impl<'tree> RatchetTree<'tree> {
                     Ok(key) => branch.add_node(key),
                     Err(_) => {
                         return Err(RatchetError{
-                            reason: "Diffie hellman failed",
+                            description: "Diffie hellman failed",
+                            cause: RatchetErrorCause::INVALID_INDEX,
                             index: key_tuple.1,
                             height: height
                         });
@@ -301,31 +318,45 @@ impl<'tree> RatchetTree<'tree> {
         return Ok(branch);
     }
 
-    pub fn commit<'caller>(tree: &'caller mut Self, branch: &'caller RatchetBranch) -> Result<&'caller Key, RatchetError<'caller>> {
-        if branch.len() < tree.height() {
+    pub fn commit(&mut self, branch: &RatchetBranch) -> Result<&Key, RatchetError> {
+        if branch.len() < self.height() {
             return Err(RatchetError{
-                reason: "Branch & Tree height mismatch: Committing branch would result in desynced state",
+                description: "Branch & Tree height mismatch: Committing branch would result in desynced state",
+                cause: RatchetErrorCause::INVALID_BRANCH,
                 index: branch.root,
                 height: branch.len()
             });
         }
 
-        let mut iter: core::slice::Iter<Key> = branch.iter();
-        let mut height: usize = 0;
+        if MEMORY_TREE_START_INDEX + branch.len() > self.memory.len() {
+            return Err(RatchetError{
+                description: "Not enough memory available in memory_pool for tree",
+                cause: RatchetErrorCause::OOM,
+                index: branch.root,
+                height: 0
+            });
+            /*for i in self.memory.len()..MEMORY_TREE_START_INDEX + branch.len() {
+                self.memory.initialize::<Key>(i, 4);
+            }*/
+        }
+
         let mut index: usize = branch.root;
 
-        if tree.orphans.get(0) == Some(&index) {
-            tree.orphans.remove(0); // remove for BumpVec shifts elements to the left
+        if self.orphans.get(0) == Some(&index) {
+            self.orphans.remove(0); // remove for BumpVec shifts elements to the left
         }
 
         // If we're committing a deletion, push the index to orphaned indexes for re-use later
-        if branch.nodes.get(0) == tree.tombstone.as_ref() {
-            tree.orphans.push(index);
+        if branch.nodes.get(0) == self.tombstone.as_ref() {
+            self.orphans.push(index);
         }
 
+        let mut iter: core::slice::Iter<Key> = branch.iter();
+        let mut height: usize = 0;
+
         while let Some(key) = iter.next() {
-            tree.ensure_layer_present(height, tree.memory.get_ref(MEMORY_TREE_START_INDEX + height));
-            let layer: &mut BumpVec<Key> = &mut tree.nodes[height];
+            self.ensure_layer_present(height, self.memory.get_ref(MEMORY_TREE_START_INDEX + height));
+            let layer: &mut BumpVec<Key> = &mut self.nodes[height];
 
             // Lol Vec.insert shifts elements to the right and there's no nice way to allocate manually
             if index >= layer.len() {
@@ -338,38 +369,29 @@ impl<'tree> RatchetTree<'tree> {
             index = get_next_index(index);
         }
 
-        return Ok(&tree.nodes[height - 1][index]);
+        if height == 0 { height = 1 };
+        return Ok(&self.nodes[height][1]);
     }
 
     // Do not immediately commit the key, return a commit view so we can commit on txn confirmation
-    pub fn insert<'caller>(tree: &Self, key: &Key, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
-        return RatchetTree::ratchet(tree, tree.get_next_index(), key, &scratch);
+    pub fn insert<'caller>(&self, key: &Key, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
+        return self.ratchet(self.get_next_index(), key, &scratch);
     }
 
-    pub fn remove<'caller>(tree: &Self, index: usize, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
-        // Lifetimes and mutable borrows, seriously it's pathetic, I can't do any graceful programming in this abhorrant language
-        // please if anyone knows a more graceful way around this fucking shit let me know, I'm pulling my hair out. Just ugly
-        // and redundant code, line after line due to mutability. Sigh.
-        //tree.set(0, index, Key::default())?;
-        let leaf_node_len: usize = tree.get_layer_len(0);
+    pub fn remove<'caller>(&self, index: usize, scratch: &'caller AllocatorCell) -> Result<RatchetBranch<'caller>, RatchetError<'caller>> {
+        let leaf_node_len: usize = self.get_layer_len(0);
         let sibling_index: usize = get_sibling_index(index);
+
         if index >= leaf_node_len || sibling_index >= leaf_node_len {
             return Err(RatchetError{
-                reason: "index provided larger than leaf-node array len",
+                description: "index provided larger than leaf-node array len",
+                cause: RatchetErrorCause::INVALID_INDEX,
                 index: index,
                 height: 0
             });
         }
 
-        /*if tree.get(0, index) == tree.tombstone.as_ref()  {
-            return Err(RatchetError{
-                reason: "Key at index has already been removed",
-                index: index,
-                height: 0
-            });
-        }*/
-
-        return RatchetTree::ratchet(tree, index, tree.tombstone.as_ref().unwrap(), scratch);
+        return self.ratchet(index, self.tombstone.as_ref().unwrap(), scratch);
     }
 
     pub fn get(&self, height: usize, index: usize) -> Option<&Key> {
@@ -384,7 +406,8 @@ impl<'tree> RatchetTree<'tree> {
         if let Some(layer) = self.nodes.get_mut(height) {
             if index >= layer.len() {
                 return Err(RatchetError{
-                    reason: "index provided larger than leaf-node array len",
+                    description: "index provided larger than leaf-node array len",
+                    cause: RatchetErrorCause::INVALID_INDEX,
                     index: index,
                     height: 0
                 });
@@ -396,7 +419,8 @@ impl<'tree> RatchetTree<'tree> {
         }
 
         return Err(RatchetError{
-            reason: "No index found at specified height",
+            description: "No index found at specified height",
+            cause: RatchetErrorCause::INVALID_INDEX,
             index: index,
             height: height
         });

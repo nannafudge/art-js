@@ -12,8 +12,7 @@ use crypto_art::{
     mem::AllocatorPool,
     mem::AllocatorCell,
     tree::RatchetBranch,
-    tree::RatchetTree,
-    tree::TreeOperations
+    tree::RatchetTree
 };
 
 use bumpalo::{
@@ -337,7 +336,7 @@ fn test_tree_remove_simple() {
     let test_allocator: Bump = AllocatorPool::create_bumpalo::<Key>(32);
 
     let mut tree_memory: AllocatorPool = AllocatorPool::new_with_init::<Key>(&root_allocator, 12, 32);
-    let mut tree: RatchetTree = RatchetTree::new(&mut tree_memory);
+    let mut tree: RatchetTree = RatchetTree::new(&tree_memory);
 
     let mut keys: Vec<Key> = Vec::new_in(&test_allocator);
 
